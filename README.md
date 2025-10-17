@@ -1,6 +1,6 @@
 # pulp-rust
 
-A Pulp plugin to support hosting your own rust.
+A Pulp plugin to support hosting your own Rust package registry.
 
 For more information, please see the [documentation](docs/index.md) or the [Pulp project page](https://pulpproject.org/).
 
