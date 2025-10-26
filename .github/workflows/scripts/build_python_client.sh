@@ -21,10 +21,10 @@ rm -rf "pulp_rust-client"
 ./gen-client.sh "../pulp_rust/rust-api.json" "rust" python "pulp_rust"
 
 pushd pulp_rust-client
-python setup.py sdist bdist_wheel --python-tag py3
+python -m build
 
 twine check "dist/pulp_rust_client-"*"-py3-none-any.whl"
-twine check "dist/pulp_rust-client-"*".tar.gz"
+twine check "dist/pulp_rust_client-"*".tar.gz"
 
 tar cvf "../../pulp_rust/rust-python-client.tar" ./dist
 
