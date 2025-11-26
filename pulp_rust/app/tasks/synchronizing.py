@@ -1,7 +1,7 @@
 from gettext import gettext as _
 import logging
 
-from pulpcore.plugin.models import Artifact, ProgressReport, Remote, Repository
+from pulpcore.plugin.models import Artifact, ProgressReport, Remote, Repository  # noqa
 from pulpcore.plugin.stages import (
     DeclarativeArtifact,
     DeclarativeContent,
