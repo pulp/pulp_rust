@@ -1,11 +1,5 @@
-"""
-Check `Plugin Writer's Guide`_ for more details.
-
-.. _Plugin Writer's Guide:
-    https://pulpproject.org/pulpcore/docs/dev/
-"""
-
 from django.db import transaction
+from django_filters import CharFilter, BooleanFilter
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
@@ -26,82 +20,82 @@ from . import models, serializers, tasks
 
 class RustContentFilter(core.ContentFilter):
     """
-    FilterSet for RustContent.
+    FilterSet for RustContent (Cargo packages).
+
+    Provides filtering capabilities for package name, version, and yanked status.
     """
+
+    # Filter by exact package name
+    name = CharFilter(field_name="name")
+
+    # Filter by exact version string
+    vers = CharFilter(field_name="vers")
+
+    # Filter by checksum
+    cksum = CharFilter(field_name="cksum")
+
+    # Filter by yanked status
+    yanked = BooleanFilter(field_name="yanked")
+
+    # Filter by minimum Rust version requirement
+    rust_version = CharFilter(field_name="rust_version")
 
     class Meta:
         model = models.RustContent
         fields = [
-            # ...
+            "name",
+            "vers",
+            "cksum",
+            "yanked",
+            "rust_version",
         ]
 
 
 class RustContentViewSet(core.ContentViewSet):
     """
-    A ViewSet for RustContent.
+    ViewSet for RustContent (Cargo package versions).
 
-    Define endpoint name which will appear in the API endpoint for this content type.
-    For example::
-        https://pulp.example.com/pulp/api/v3/content/rust/units/
+    Provides CRUD operations for Cargo package metadata including:
+    - Package name and version
+    - Dependencies with version requirements
+    - Feature flags
+    - Checksum verification
+    - Yanked status
 
-    Also specify queryset and serializer for RustContent.
+    API endpoint: /pulp/api/v3/content/rust/packages/
     """
 
-    endpoint_name = "rust"
-    queryset = models.RustContent.objects.all()
+    endpoint_name = "packages"
+    queryset = models.RustContent.objects.prefetch_related("dependencies").all()
     serializer_class = serializers.RustContentSerializer
     filterset_class = RustContentFilter
 
     @transaction.atomic
     def create(self, request):
         """
-        Perform bookkeeping when saving Content.
+        Create a new RustContent (Cargo package version).
 
-        "Artifacts" need to be popped off and saved indpendently, as they are not actually part
-        of the Content model.
+        This handles creation of the package metadata along with its associated
+        artifact (.crate file) and dependencies.
         """
-        return Response({}, status=status.HTTP_501_NOT_IMPLEMENTED)
-        # This requires some choice. Depending on the properties of your content type - whether it
-        # can have zero, one, or many artifacts associated with it, and whether any properties of
-        # the artifact bleed into the content type (such as the digest), you may want to make
-        # those changes here.
-
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # A single artifact per content, serializer subclasses SingleArtifactContentSerializer
-        # ======================================
-        # _artifact = serializer.validated_data.pop("_artifact")
-        # # you can save model fields directly, e.g. .save(digest=_artifact.sha256)
-        # content = serializer.save()
-        #
-        # if content.pk:
-        #     ContentArtifact.objects.create(
-        #         artifact=artifact,
-        #         content=content,
-        #         relative_path= ??
-        #     )
-        # =======================================
+        # Extract artifact from validated data
+        _artifact = serializer.validated_data.pop("_artifact", None)
 
-        # Many artifacts per content, serializer subclasses MultipleArtifactContentSerializer
-        # =======================================
-        # _artifacts = serializer.validated_data.pop("_artifacts")
-        # content = serializer.save()
-        #
-        # if content.pk:
-        #   # _artifacts is a dictionary of {"relative_path": "artifact"}
-        #   for relative_path, artifact in _artifacts.items():
-        #       ContentArtifact.objects.create(
-        #           artifact=artifact,
-        #           content=content,
-        #           relative_path=relative_path
-        #       )
-        # ========================================
+        # Create the content (this also creates dependencies via serializer)
+        content = serializer.save()
 
-        # No artifacts, serializer subclasses NoArtifactContentSerialier
-        # ========================================
-        # content = serializer.save()
-        # ========================================
+        # Associate the .crate file artifact with the content
+        if content.pk and _artifact:
+            # The relative path for the .crate file follows Cargo's naming convention:
+            # {name}/{name}-{version}.crate
+            relative_path = f"{content.name}/{content.name}-{content.vers}.crate"
+
+            ContentArtifact.objects.create(
+                artifact=_artifact, content=content, relative_path=relative_path
+            )
 
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
@@ -181,43 +175,6 @@ class RustRepositoryVersionViewSet(core.RepositoryVersionViewSet):
     """
 
     parent_viewset = RustRepositoryViewSet
-
-
-class RustPublicationViewSet(core.PublicationViewSet):
-    """
-    A ViewSet for RustPublication.
-
-    Similar to the RustContentViewSet above, define endpoint_name,
-    queryset and serializer, at a minimum.
-    """
-
-    endpoint_name = "rust"
-    queryset = models.RustPublication.objects.exclude(complete=False)
-    serializer_class = serializers.RustPublicationSerializer
-
-    # This decorator is necessary since a publish operation is asyncrounous and returns
-    # the id and href of the publish task.
-    @extend_schema(
-        description="Trigger an asynchronous task to publish content",
-        responses={202: AsyncOperationResponseSerializer},
-    )
-    def create(self, request):
-        """
-        Publishes a repository.
-
-        Either the ``repository`` or the ``repository_version`` fields can
-        be provided but not both at the same time.
-        """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        repository_version = serializer.validated_data.get("repository_version")
-
-        result = dispatch(
-            tasks.publish,
-            [repository_version.repository],
-            kwargs={"repository_version_pk": str(repository_version.pk)},
-        )
-        return core.OperationPostponedResponse(result, request)
 
 
 class RustDistributionViewSet(core.DistributionViewSet):
