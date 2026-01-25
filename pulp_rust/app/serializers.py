@@ -1,11 +1,30 @@
-from gettext import gettext as _
+import logging
 
+from gettext import gettext as _
 from rest_framework import serializers
 
 from pulpcore.plugin import models as core_models
 from pulpcore.plugin import serializers as core_serializers
 
 from . import models
+
+log = logging.getLogger(__name__)
+
+
+class IndexRootSerializer(serializers.Serializer):
+    """
+    A Serializer for summary information of an index.
+    """
+
+    dl = serializers.CharField(help_text=_("URL of the index root"), read_only=True)
+    api = serializers.CharField(help_text=_("URL of the API root"), read_only=True)
+    auth_required = serializers.BooleanField(
+        help_text=_(
+            "Indicates whether this is a private registry that requires all operations to "
+            "be authenticated"
+        ),
+        read_only=True,
+    )
 
 
 class RustDependencySerializer(serializers.ModelSerializer):
@@ -181,28 +200,14 @@ class RustContentSerializer(core_serializers.SingleArtifactContentSerializer):
 class RustRemoteSerializer(core_serializers.RemoteSerializer):
     """
     A Serializer for RustRemote.
-
-    Add any new fields if defined on RustRemote.
-    Similar to the example above, in RustContentSerializer.
-    Additional validators can be added to the parent validators list
-
-    For example::
-
-    class Meta:
-        validators = core_serializers.RemoteSerializer.Meta.validators
-            + [myValidator1, myValidator2]
-
-    By default the 'policy' field in core_serializers.RemoteSerializer only validates the choice
-    'immediate'. To add on-demand support for more 'policy' options, e.g. 'streamed' or
-    'on_demand', re-define the 'policy' option as follows::
+    """
 
     policy = serializers.ChoiceField(
         help_text="The policy to use when downloading content. The possible values include: "
-                  "'immediate', 'on_demand', and 'streamed'. 'immediate' is the default.",
+        "'immediate', 'on_demand', and 'streamed'. 'streamed' is the default.",
         choices=models.Remote.POLICY_CHOICES,
-        default=models.Remote.IMMEDIATE
+        default=models.Remote.STREAMED,
     )
-    """
 
     class Meta:
         fields = core_serializers.RemoteSerializer.Meta.fields
@@ -258,3 +263,31 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
     class Meta:
         fields = core_serializers.DistributionSerializer.Meta.fields + ("allow_uploads", "remote")
         model = models.RustDistribution
+
+
+class RepositoryAddCachedContentSerializer(
+    core_serializers.ValidateFieldsMixin, serializers.Serializer
+):
+    remote = core_serializers.DetailRelatedField(
+        required=False,
+        view_name_pattern=r"remotes(-.*/.*)-detail",
+        queryset=models.Remote.objects.all(),
+        help_text=_(
+            "A remote to use to identify content that was cached. This will override a "
+            "remote set on repository."
+        ),
+    )
+
+    def validate(self, data):
+        data = super().validate(data)
+        repository = None
+        if "repository_pk" in self.context:
+            repository = models.Repository.objects.get(pk=self.context["repository_pk"])
+        remote = data.get("remote", None) or getattr(repository, "remote", None)
+
+        if not remote:
+            raise serializers.ValidationError(
+                {"remote": _("This field is required since a remote is not set on the repository.")}
+            )
+        self.check_cross_domains({"repository": repository, "remote": remote})
+        return data

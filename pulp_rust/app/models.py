@@ -40,10 +40,10 @@ class RustContent(Content):
     name = models.CharField(max_length=255, blank=False, null=False, db_index=True)
 
     # Semantic version string following SemVer 2.0.0 specification
-    vers = models.CharField(max_length=64, blank=False, null=False)
+    vers = models.CharField(max_length=64, blank=False, null=False, db_index=True)
 
     # SHA256 checksum (hex-encoded) of the .crate tarball file for verification
-    cksum = models.CharField(max_length=64, blank=False, null=False)
+    cksum = models.CharField(max_length=64, blank=False, null=False, db_index=True)
 
     # Indicates if this version has been yanked (deprecated/removed from use)
     # Yanked versions can still be used by existing Cargo.lock files but won't be selected

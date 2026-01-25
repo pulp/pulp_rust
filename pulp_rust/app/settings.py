@@ -1,6 +1,3 @@
-"""
-Check `Plugin Writer's Guide`_ for more details.
+import socket
 
-.. _Plugin Writer's Guide:
-    https://pulpproject.org/pulpcore/docs/dev/
-"""
+CRATES_IO_API_HOSTNAME = "https://" + socket.getfqdn()
