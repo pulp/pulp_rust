@@ -73,6 +73,8 @@ class RustFirstStage(Stage):
         downloader = self.remote.get_downloader(url=self.remote.url)
         result = await downloader.run()
         # Use ProgressReport to report progress
+        raise NotImplementedError("Not implemented")
+
         for entry in self.read_my_metadata_file_somehow(result.path):
             unit = RustContent(entry)  # make the content unit in memory-only
             artifact = Artifact(entry)  # make Artifact in memory-only

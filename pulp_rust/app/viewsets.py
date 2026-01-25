@@ -167,6 +167,42 @@ class RustRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin)
         )
         return core.OperationPostponedResponse(result, request)
 
+    @extend_schema(
+        description="Trigger an asynchronous task to add cached content to a repository.",
+        summary="Add cached content",
+        responses={202: AsyncOperationResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        serializer_class=serializers.RepositoryAddCachedContentSerializer,
+    )
+    def add_cached_content(self, request, pk):
+        """
+        Add to the repository any new content that was cached using the remote since the last
+        repository version was created.
+
+        The ``repository`` field has to be provided.
+        """
+        serializer = serializers.RepositoryAddCachedContentSerializer(
+            data=request.data, context={"request": request, "repository_pk": pk}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        repository = self.get_object()
+        remote = serializer.validated_data.get("remote", repository.remote)
+
+        result = dispatch(
+            tasks.add_cached_content_to_repository,
+            shared_resources=[remote],
+            exclusive_resources=[repository],
+            kwargs={
+                "remote_pk": str(remote.pk),
+                "repository_pk": str(repository.pk),
+            },
+        )
+        return core.OperationPostponedResponse(result, request)
+
 
 class RustRepositoryVersionViewSet(core.RepositoryVersionViewSet):
     """
