@@ -7,91 +7,40 @@
 #
 # For more info visit https://github.com/pulp/plugin_template
 
+set -euv
+
 # make sure this script runs at the repo root
 cd "$(dirname "$(realpath -e "$0")")"/../../..
 REPO_ROOT="$PWD"
 
-set -euv
-
 source .github/workflows/scripts/utils.sh
 
-PLUGIN_VERSION="$(bump-my-version show current_version | tail -n -1 | python -c 'from packaging.version import Version; print(Version(input()))')"
-PLUGIN_SOURCE="./pulp_rust/dist/pulp_rust-${PLUGIN_VERSION}-py3-none-any.whl"
-
-export PULP_API_ROOT="/pulp/"
-
-PIP_REQUIREMENTS=("pulp-cli")
+PIP_REQUIREMENTS=("pulp-cli" "yq")
 
 # This must be the **only** call to "pip install" on the test runner.
 pip install ${PIP_REQUIREMENTS[*]}
 
+if [[ "$TEST" = "s3" ]]; then
+for i in {1..3}
+do
+  ansible-galaxy collection install "amazon.aws:11.1.0" && s=0 && break || s=$? && sleep 3
+done
+if [[ $s -gt 0 ]]
+then
+  echo "Failed to install amazon.aws"
+  exit $s
+fi
+fi
+
+PULP_API_ROOT="$(yq -r '.pulp_scenario_settings.api_root // .pulp_settings.api_root // "/pulp/"' < .ci/ansible/vars/main.yaml)"
+
+pulp config create --base-url https://pulp --api-root "${PULP_API_ROOT}" --username "admin" --password "password"
 
 
 cd .ci/ansible/
 
-cat >> vars/main.yaml << VARSYAML
-image:
-  name: pulp
-  tag: "ci_build"
-plugins:
-  - name: pulp_rust
-    source: "${PLUGIN_SOURCE}"
-VARSYAML
-if [[ -f ../../ci_requirements.txt ]]; then
-  cat >> vars/main.yaml << VARSYAML
-    ci_requirements: true
-VARSYAML
-fi
-if [ "$TEST" = "pulp" ]; then
-  cat >> vars/main.yaml << VARSYAML
-    upperbounds: true
-VARSYAML
-fi
-if [ "$TEST" = "lowerbounds" ]; then
-  cat >> vars/main.yaml << VARSYAML
-    lowerbounds: true
-VARSYAML
-fi
-
-cat >> vars/main.yaml << VARSYAML
-services:
-  - name: pulp
-    image: "pulp:ci_build"
-    volumes:
-      - ./settings:/etc/pulp
-      - ./ssh:/keys/
-      - ~/.config:/var/lib/pulp/.config
-      - ../../../pulp-openapi-generator:/root/pulp-openapi-generator
-    env:
-      PULP_WORKERS: "4"
-      PULP_HTTPS: "true"
-VARSYAML
-
-cat >> vars/main.yaml << VARSYAML
-pulp_env: {}
-pulp_settings: null
-pulp_scheme: https
-pulp_default_container: ghcr.io/pulp/pulp-ci-centos9:latest
-VARSYAML
-
-echo "PULP_API_ROOT=${PULP_API_ROOT}" >> "$GITHUB_ENV"
-
-if [ "${PULP_API_ROOT:-}" ]; then
-  sed -i -e '$a api_root: "'"$PULP_API_ROOT"'"' vars/main.yaml
-fi
-
-pulp config create --base-url https://pulp --api-root "$PULP_API_ROOT" --username "admin" --password "password"
-
-
 ansible-playbook build_container.yaml
 ansible-playbook start_container.yaml
-
-# .config needs to be accessible by the pulp user in the container, but some
-# files will likely be modified on the host by post/pre scripts.
-chmod 777 ~/.config/pulp_smash/
-chmod 666 ~/.config/pulp_smash/settings.json
-
-sudo chown -R 700:700 ~/.config
 echo ::group::SSL
 # Copy pulp CA
 sudo docker cp pulp:/etc/pulp/certs/pulp_webserver.crt /usr/local/share/ca-certificates/pulp_webserver.crt
@@ -113,6 +62,6 @@ if [[ "$TEST" = "azure" ]]; then
   az storage container create --name pulp-test --connection-string $AZURE_STORAGE_CONNECTION_STRING
 fi
 
-echo ::group::PIP_LIST
-cmd_prefix bash -c "pip3 list"
-echo ::endgroup::
+# Needed for some functional tests
+cmd_prefix bash -c "echo '%wheel        ALL=(ALL)       NOPASSWD: ALL' > /etc/sudoers.d/nopasswd"
+cmd_prefix bash -c "usermod -a -G wheel pulp"

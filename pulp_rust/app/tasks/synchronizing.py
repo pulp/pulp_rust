@@ -11,7 +11,6 @@ from pulpcore.plugin.stages import (
 
 from pulp_rust.app.models import RustContent, RustRemote
 
-
 log = logging.getLogger(__name__)
 
 
