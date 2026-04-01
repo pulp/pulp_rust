@@ -116,6 +116,8 @@ ignore = [
     ".dependabot/config.yml",
     ".ci/**",
     ".github/**",
+    "AGENTS.md",
+    "CLAUDE.md",
 ]
 
 [tool.bumpversion]
