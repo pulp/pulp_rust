@@ -1,5 +1,5 @@
 from django.db import transaction
-from django_filters import CharFilter, BooleanFilter
+from django_filters import CharFilter
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.decorators import action
@@ -22,7 +22,7 @@ class RustContentFilter(core.ContentFilter):
     """
     FilterSet for RustContent (Cargo packages).
 
-    Provides filtering capabilities for package name, version, and yanked status.
+    Provides filtering capabilities for package name, version, and checksum.
     """
 
     # Filter by exact package name
@@ -34,9 +34,6 @@ class RustContentFilter(core.ContentFilter):
     # Filter by checksum
     cksum = CharFilter(field_name="cksum")
 
-    # Filter by yanked status
-    yanked = BooleanFilter(field_name="yanked")
-
     # Filter by minimum Rust version requirement
     rust_version = CharFilter(field_name="rust_version")
 
@@ -46,7 +43,6 @@ class RustContentFilter(core.ContentFilter):
             "name",
             "vers",
             "cksum",
-            "yanked",
             "rust_version",
         ]
 

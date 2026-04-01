@@ -1,18 +1,13 @@
 import datetime
 
-from asgiref.sync import sync_to_async
-
 from pulpcore.plugin.models import Content, ContentArtifact, RemoteArtifact
-from pulpcore.plugin.tasking import add_and_remove
 
 from pulp_rust.app.models import RustRemote, RustRepository
 
 
-async def aadd_and_remove(*args, **kwargs):
-    return await sync_to_async(add_and_remove)(*args, **kwargs)
-
-
-# TODO: look at the version in models/repository.py
+# Note: pulpcore's Repository.pull_through_add_content() is a different pattern — it adds a
+# single content unit immediately during streaming. This task instead does a batch "catch up",
+# finding all content cached since the last repo version and adding them in one new version.
 def add_cached_content_to_repository(repository_pk=None, remote_pk=None):
     """
     Create a new repository version by adding content that was cached by pulpcore-content when

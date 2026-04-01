@@ -14,6 +14,14 @@ A Pulp plugin to support hosting your own Rust/Cargo package registry.
 - Host content either locally or on S3/Azure/GCP
 - De-duplication of all saved content
 
+## Not Yet Supported
+
+The following features are not yet implemented but are planned for future releases:
+
+- **Publishing** (`cargo publish`) -- crates cannot yet be uploaded via the Cargo CLI
+- **Authentication & authorization** -- the registry is currently open to all clients
+- **Syncing** -- mirroring an entire upstream registry is not yet supported; use pull-through caching instead
+
 For more information, please see the [documentation](docs/index.md) or the [Pulp project page](https://pulpproject.org/).
 
 
