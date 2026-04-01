@@ -1,5 +1,7 @@
 import json
 import logging
+import urllib.request
+import urllib.error
 
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
@@ -15,12 +17,11 @@ from django.http.response import (
 )
 from drf_spectacular.utils import extend_schema
 from dynaconf import settings
-from pathlib import PurePath
 from urllib.parse import urljoin
 
 from pulpcore.plugin.util import get_domain
 
-from pulp_rust.app.models import RustDistribution, RustRepository, RustContent
+from pulp_rust.app.models import RustDistribution, RustContent, _strip_sparse_prefix
 from pulp_rust.app.serializers import (
     IndexRootSerializer,
     RustContentSerializer,
@@ -85,7 +86,6 @@ class ApiMixin:
         """Perform common initialization tasks for API endpoints."""
         super().initial(request, *args, **kwargs)
         domain_name = get_domain().name
-        log.warning(self.kwargs)
         repo = self.kwargs["repo"]
         if settings.DOMAIN_ENABLED:
             self.base_content_url = urljoin(BASE_CONTENT_URL, f"pulp/cargo/{domain_name}/{repo}/")
@@ -121,7 +121,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         responses={200: RustContentSerializer},
         summary="Get package metadata",
     )
-    def retrieve(self, request, path):
+    def retrieve(self, request, path, **kwargs):
         """
         Retrieve crate metadata for the sparse protocol.
 
@@ -132,42 +132,57 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         - 4+ chars: {first-two}/{second-two}/{crate}
 
         Returns newline-delimited JSON, one version per line.
+
+        If the crate is not found locally and the distribution has a remote,
+        the metadata is proxied from the upstream sparse index.
         """
         repo_ver, content = self.get_rvc()
 
-        if content is None:
-            return HttpResponseNotFound("No content available")
+        # Extract crate name from the path (last component)
+        crate_name = path.rsplit("/", 1)[-1].lower()
 
-        # Extract crate name from the path
-        meta_path = PurePath(path)
-        crate_name = meta_path.name.lower()
+        # Try to serve from local content first
+        if content is not None:
+            crate_versions = content.filter(name=crate_name).order_by("vers")
+            if crate_versions.exists():
+                return self._build_index_response(crate_versions)
 
-        # Query for all versions of this crate
-        crate_versions = content.filter(name=crate_name).order_by("vers")
+        # Fall back to proxying from the upstream remote
+        if self.distribution.remote:
+            remote = self.distribution.remote.cast()
+            index_url = _strip_sparse_prefix(remote.url).rstrip("/")
+            upstream_url = f"{index_url}/{path}"
+            try:
+                response = urllib.request.urlopen(upstream_url)
+                return HttpResponse(response.read(), content_type="text/plain")
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return HttpResponseNotFound(f"Crate '{crate_name}' not found")
+                raise
 
-        if not crate_versions.exists():
-            return HttpResponseNotFound(f"Crate '{crate_name}' not found")
+        return HttpResponseNotFound(f"Crate '{crate_name}' not found")
 
-        # Build newline-delimited JSON response
+    @staticmethod
+    def _build_index_response(crate_versions):
+        """Build a newline-delimited JSON response from local crate versions."""
         lines = []
         for crate_version in crate_versions:
-            # Fetch dependencies for this version
             deps = []
             for dep in crate_version.dependencies.all():
-                dep_obj = {
-                    "name": dep.name,
-                    "req": dep.req,
-                    "features": dep.features,
-                    "optional": dep.optional,
-                    "default_features": dep.default_features,
-                    "target": dep.target,
-                    "kind": dep.kind,
-                    "registry": dep.registry,
-                    "package": dep.package,
-                }
-                deps.append(dep_obj)
+                deps.append(
+                    {
+                        "name": dep.name,
+                        "req": dep.req,
+                        "features": dep.features,
+                        "optional": dep.optional,
+                        "default_features": dep.default_features,
+                        "target": dep.target,
+                        "kind": dep.kind,
+                        "registry": dep.registry,
+                        "package": dep.package,
+                    }
+                )
 
-            # Build the version object according to sparse protocol
             version_obj = {
                 "name": crate_version.name,
                 "vers": crate_version.vers,
@@ -179,18 +194,14 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
                 "v": crate_version.v,
             }
 
-            # Add optional fields only if present
             if crate_version.features2:
                 version_obj["features2"] = crate_version.features2
             if crate_version.rust_version:
                 version_obj["rust_version"] = crate_version.rust_version
 
-            # Serialize to JSON and add to lines
             lines.append(json.dumps(version_obj))
 
-        # Join with newlines and return as plain text
-        response_text = "\n".join(lines)
-        return HttpResponse(response_text, content_type="text/plain")
+        return HttpResponse("\n".join(lines), content_type="text/plain")
 
 
 class IndexRoot(ApiMixin, ViewSet):
@@ -221,13 +232,8 @@ class IndexRoot(ApiMixin, ViewSet):
 
 class CargoDownloadApiView(APIView):
     """
-    ViewSet for interacting with Cargo's API API
+    View for Cargo's crate download, readme, yank, and unyank endpoints.
     """
-
-    model = RustRepository
-    queryset = RustRepository.objects.all()
-
-    lookup_field = "name"
 
     # Authentication disabled for now
     authentication_classes = []
@@ -248,23 +254,50 @@ class CargoDownloadApiView(APIView):
             f"{self.get_full_path(distribution.base_path)}/{relative_path}"
         )
 
-    def get_repository_and_distributions(self, name):
-        repository = get_object_or_404(RustRepository, name=name, pulp_domain=get_domain())
-        distribution = get_object_or_404(
-            RustDistribution, repository=repository, pulp_domain=get_domain()
+    def get_distribution(self):
+        return get_object_or_404(
+            RustDistribution, base_path=self.kwargs["repo"], pulp_domain=get_domain()
         )
-        return repository, distribution
 
-    def get(self, request, name, version):
+    def get(self, request, name, version, rest, **kwargs):
         """
-        Responds to GET requests about packages by reference
+        Responds to GET requests for crate downloads and readmes.
+
+        Handles:
+        - api/v1/crates/{name}/{version}/download - redirect to .crate file
+        - api/v1/crates/{name}/{version}/readme - not yet implemented
         """
-        repo, distro = self.get_repository_and_distributions(name)
-        content = get_object_or_404(
-            RustContent, name=name, vers=version, pk__in=repo.latest_version().content
-        )
-        relative_path = content.contentartifact_set.get().relative_path
-        return self.redirect_to_content_app(distro, relative_path, request)
+        distro = self.get_distribution()
+
+        if rest == "download":
+            relative_path = f"{name}/{name}-{version}.crate"
+            return self.redirect_to_content_app(distro, relative_path, request)
+        elif rest == "readme":
+            raise NotImplementedError("Readme endpoint is not yet implemented")
+        else:
+            raise Http404(f"Unknown action: {rest}")
+
+    def delete(self, request, name, version, rest, **kwargs):
+        """
+        Responds to DELETE requests for yanking crate versions.
+
+        Handles:
+        - api/v1/crates/{name}/{version}/yank
+        """
+        if rest != "yank":
+            raise Http404(f"Unknown action: {rest}")
+        raise NotImplementedError("Yank endpoint is not yet implemented")
+
+    def put(self, request, name, version, rest, **kwargs):
+        """
+        Responds to PUT requests for unyanking crate versions.
+
+        Handles:
+        - api/v1/crates/{name}/{version}/unyank
+        """
+        if rest != "unyank":
+            raise Http404(f"Unknown action: {rest}")
+        raise NotImplementedError("Unyank endpoint is not yet implemented")
 
 
 def has_task_completed(task):

@@ -204,9 +204,9 @@ class RustRemoteSerializer(core_serializers.RemoteSerializer):
 
     policy = serializers.ChoiceField(
         help_text="The policy to use when downloading content. The possible values include: "
-        "'immediate', 'on_demand', and 'streamed'. 'streamed' is the default.",
+        "'immediate', 'on_demand', and 'streamed'. 'on_demand' is the default.",
         choices=models.Remote.POLICY_CHOICES,
-        default=models.Remote.STREAMED,
+        default=models.Remote.ON_DEMAND,
     )
 
     class Meta:
