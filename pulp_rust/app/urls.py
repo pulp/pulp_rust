@@ -11,7 +11,7 @@ else:
 
 urlpatterns = [
     path(
-        CRATES_IO_URL + "api/v1/crates/<str:package>/<str:version>/<path:rest>",
+        CRATES_IO_URL + "api/v1/crates/<str:name>/<str:version>/<path:rest>",
         CargoDownloadApiView.as_view(),
         name="cargo-download-api",
     ),

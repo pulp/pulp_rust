@@ -1,3 +1,5 @@
+import json
+import urllib.request
 from logging import getLogger
 
 from django.db import models
@@ -11,6 +13,31 @@ from pulpcore.plugin.models import (
 from pulpcore.plugin.util import get_domain_pk
 
 logger = getLogger(__name__)
+
+
+def _strip_sparse_prefix(url):
+    """Strip the sparse+ prefix from a Cargo registry URL."""
+    if url.startswith("sparse+"):
+        return url[len("sparse+") :]
+    return url
+
+
+def _parse_crate_relative_path(relative_path):
+    """
+    Parse crate name and version from a relative path.
+
+    Expected format: {name}/{name}-{version}.crate
+    Returns: (crate_name, version)
+    """
+    # "serde/serde-1.0.0.crate" -> "serde-1.0.0.crate"
+    filename = relative_path.rsplit("/", 1)[-1]
+    # "serde-1.0.0.crate" -> "serde-1.0.0"
+    stem = filename[: -len(".crate")]
+    # "serde/serde-1.0.0.crate" -> "serde"
+    crate_name = relative_path.split("/", 1)[0]
+    # "serde-1.0.0" -> "1.0.0"
+    version = stem[len(crate_name) + 1 :]
+    return crate_name, version
 
 
 class RustContent(Content):
@@ -72,6 +99,22 @@ class RustContent(Content):
     v = models.IntegerField(default=1)
 
     _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
+
+    @staticmethod
+    def init_from_artifact_and_relative_path(artifact, relative_path):
+        """
+        Create an unsaved RustContent from a downloaded .crate artifact.
+
+        Called by pulpcore's content handler during pull-through caching.
+        Only populates name, version, and checksum -- dependency and feature
+        metadata is served from the upstream sparse index via the proxy.
+        """
+        crate_name, version = _parse_crate_relative_path(relative_path)
+        return RustContent(
+            name=crate_name,
+            vers=version,
+            cksum=artifact.sha256,
+        )
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
@@ -159,10 +202,43 @@ class RustRemote(Remote):
     """
     A Remote for RustContent.
 
-    Define any additional fields for your new remote if needed.
+    The `url` field should point to the sparse index root, optionally prefixed
+    with `sparse+` (e.g. `sparse+https://index.crates.io/`).
     """
 
     TYPE = "rust"
+
+    def get_remote_artifact_url(self, relative_path=None, request=None):
+        """
+        Construct the upstream download URL for a .crate file.
+
+        Fetches config.json from the index root to obtain the `dl` template,
+        then substitutes {crate} and {version} markers per the Cargo spec.
+        """
+        if relative_path is None or not relative_path.endswith(".crate"):
+            return None
+
+        crate_name, version = _parse_crate_relative_path(relative_path)
+        index_url = _strip_sparse_prefix(self.url).rstrip("/")
+
+        # TODO: Cache the config.json response to avoid fetching it on every request.
+        config_url = f"{index_url}/config.json"
+        response = urllib.request.urlopen(config_url)
+        config = json.loads(response.read())
+        dl_template = config["dl"]
+
+        if "{crate}" in dl_template or "{version}" in dl_template:
+            return dl_template.replace("{crate}", crate_name).replace("{version}", version)
+        else:
+            # No markers: per Cargo spec, append /{crate}/{version}/download
+            return f"{dl_template.rstrip('/')}/{crate_name}/{version}/download"
+
+    @staticmethod
+    def get_remote_artifact_content_type(relative_path=None):
+        """Return the content type for the given relative path."""
+        if relative_path and relative_path.endswith(".crate"):
+            return RustContent
+        return None
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
@@ -171,13 +247,13 @@ class RustRemote(Remote):
 class RustRepository(Repository):
     """
     A Repository for RustContent.
-
-    Define any additional fields for your new repository if needed.
     """
 
     TYPE = "rust"
 
     CONTENT_TYPES = [RustContent]
+    REMOTE_TYPES = [RustRemote]
+    PULL_THROUGH_SUPPORTED = True
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"

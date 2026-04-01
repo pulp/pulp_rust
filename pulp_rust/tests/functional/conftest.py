@@ -4,7 +4,7 @@ import pytest
 
 from pulpcore.client.pulp_rust import (
     ApiClient,
-    ContentArtifactApi,
+    ContentPackagesApi,
     DistributionsRustApi,
     RemotesRustApi,
     RepositoriesRustApi,
@@ -20,8 +20,8 @@ def rust_client(_api_client_set, bindings_cfg):
 
 
 @pytest.fixture(scope="session")
-def rust_artifact_api_client(rust_client):
-    return ContentArtifactApi(rust_client)
+def rust_content_api_client(rust_client):
+    return ContentPackagesApi(rust_client)
 
 
 @pytest.fixture(scope="session")
@@ -69,3 +69,20 @@ def rust_remote_factory(rust_remote_api_client, gen_object_with_cleanup):
         return gen_object_with_cleanup(rust_remote_api_client, kwargs)
 
     yield _rust_remote_factory
+
+
+@pytest.fixture(scope="session")
+def cargo_registry_url(bindings_cfg, pulp_settings):
+    """Build the Cargo API base URL for a distribution's base_path.
+
+    The Cargo API views (config.json, sparse index, downloads) are served at
+    /pulp/cargo/{base_path}/, not through the content app.
+    Accounts for DOMAIN_ENABLED mode which adds a domain slug to the path.
+    """
+
+    def _cargo_registry_url(base_path):
+        if pulp_settings.DOMAIN_ENABLED:
+            return f"{bindings_cfg.host}/pulp/cargo/default/{base_path}/"
+        return f"{bindings_cfg.host}/pulp/cargo/{base_path}/"
+
+    return _cargo_registry_url

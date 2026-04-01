@@ -12,6 +12,7 @@ async def aadd_and_remove(*args, **kwargs):
     return await sync_to_async(add_and_remove)(*args, **kwargs)
 
 
+# TODO: look at the version in models/repository.py
 def add_cached_content_to_repository(repository_pk=None, remote_pk=None):
     """
     Create a new repository version by adding content that was cached by pulpcore-content when
