@@ -21,7 +21,15 @@ from urllib.parse import urljoin
 
 from pulpcore.plugin.util import get_domain
 
-from pulp_rust.app.models import RustDistribution, RustContent, _strip_sparse_prefix
+from pulpcore.plugin.tasking import dispatch
+
+from pulp_rust.app.models import (
+    RustDistribution,
+    RustContent,
+    RustPackageYank,
+    _strip_sparse_prefix,
+)
+from pulp_rust.app.tasks import ayank_package, aunyank_package
 from pulp_rust.app.serializers import (
     IndexRootSerializer,
     RustContentSerializer,
@@ -154,7 +162,12 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         if content is not None:
             crate_versions = content.filter(name=crate_name).order_by("vers")
             if crate_versions.exists():
-                return self._build_index_response(crate_versions)
+                yanked_versions = set(
+                    RustPackageYank.objects.filter(
+                        pk__in=repo_ver.content, name=crate_name
+                    ).values_list("vers", flat=True)
+                )
+                return self._build_index_response(crate_versions, yanked_versions)
 
         # Fall back to proxying from the upstream remote
         if self.distribution.remote:
@@ -172,7 +185,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         return HttpResponseNotFound(f"Crate '{crate_name}' not found")
 
     @staticmethod
-    def _build_index_response(crate_versions):
+    def _build_index_response(crate_versions, yanked_versions=frozenset()):
         """Build a newline-delimited JSON response from local crate versions."""
         lines = []
         for crate_version in crate_versions:
@@ -200,7 +213,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
                 "deps": deps,
                 "cksum": crate_version.cksum,
                 "features": crate_version.features,
-                "yanked": crate_version.yanked,
+                "yanked": crate_version.vers in yanked_versions,
                 "links": crate_version.links,
                 "v": crate_version.v,
             }
@@ -293,7 +306,35 @@ class CargoDownloadApiView(APIView):
         """
         if rest != "yank":
             raise Http404(f"Unknown action: {rest}")
-        raise NotImplementedError("Yank endpoint is not yet implemented")
+
+        distro = self.get_distribution()
+        if not distro.repository:
+            raise Http404("No repository associated with this distribution")
+
+        repo_version = distro.repository.latest_version()
+        if not RustContent.objects.filter(
+            pk__in=repo_version.content, name=name, vers=version
+        ).exists():
+            return HttpResponse(
+                json.dumps(
+                    {"errors": [{"detail": f"crate `{name}` does not have a version `{version}`"}]}
+                ),
+                content_type="application/json",
+                status=404,
+            )
+
+        task = dispatch(
+            ayank_package,
+            exclusive_resources=[distro.repository],
+            immediate=True,
+            kwargs={
+                "repository_pk": str(distro.repository.pk),
+                "name": name,
+                "vers": version,
+            },
+        )
+        has_task_completed(task)
+        return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
     def put(self, request, name, version, rest, **kwargs):
         """
@@ -304,7 +345,23 @@ class CargoDownloadApiView(APIView):
         """
         if rest != "unyank":
             raise Http404(f"Unknown action: {rest}")
-        raise NotImplementedError("Unyank endpoint is not yet implemented")
+
+        distro = self.get_distribution()
+        if not distro.repository:
+            raise Http404("No repository associated with this distribution")
+
+        task = dispatch(
+            aunyank_package,
+            exclusive_resources=[distro.repository],
+            immediate=True,
+            kwargs={
+                "repository_pk": str(distro.repository.pk),
+                "name": name,
+                "vers": version,
+            },
+        )
+        has_task_completed(task)
+        return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
 
 def has_task_completed(task):

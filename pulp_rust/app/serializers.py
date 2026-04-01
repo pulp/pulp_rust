@@ -135,12 +135,6 @@ class RustContentSerializer(core_serializers.SingleArtifactContentSerializer):
         help_text=_("Extended feature syntax support (newer registry format)"),
     )
 
-    yanked = serializers.BooleanField(
-        default=False,
-        required=False,
-        help_text=_("Whether this version has been yanked (removed from normal use)"),
-    )
-
     links = serializers.CharField(
         allow_null=True,
         required=False,
@@ -189,7 +183,6 @@ class RustContentSerializer(core_serializers.SingleArtifactContentSerializer):
             "cksum",
             "features",
             "features2",
-            "yanked",
             "links",
             "v",
             "rust_version",
@@ -263,6 +256,19 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
     class Meta:
         fields = core_serializers.DistributionSerializer.Meta.fields + ("allow_uploads", "remote")
         model = models.RustDistribution
+
+
+class YankSerializer(serializers.Serializer):
+    """Serializer for yank/unyank operations on a repository."""
+
+    name = serializers.CharField(
+        required=True,
+        help_text=_("The crate name to yank or unyank."),
+    )
+    vers = serializers.CharField(
+        required=True,
+        help_text=_("The crate version to yank or unyank."),
+    )
 
 
 class RepositoryAddCachedContentSerializer(

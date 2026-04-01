@@ -55,7 +55,6 @@ class RustContent(Content):
         name: The package name (crate name)
         vers: The semantic version string (SemVer 2.0.0)
         cksum: SHA256 checksum of the .crate file (tarball)
-        yanked: Whether this version has been yanked (removed from normal use)
         features: JSON object mapping feature names to their dependencies
         features2: JSON object with extended feature syntax support
         links: Value from Cargo.toml manifest 'links' field (for native library linking)
@@ -74,11 +73,6 @@ class RustContent(Content):
 
     # SHA256 checksum (hex-encoded) of the .crate tarball file for verification
     cksum = models.CharField(max_length=64, blank=False, null=False, db_index=True)
-
-    # Indicates if this version has been yanked (deprecated/removed from use)
-    # Yanked versions can still be used by existing Cargo.lock files but won't be selected
-    # for new builds
-    yanked = models.BooleanField(default=False)
 
     # Feature flags and compatibility
     # Maps feature names to lists of features/dependencies they enable
@@ -264,6 +258,28 @@ class RustRemote(Remote):
         default_related_name = "%(app_label)s_%(model_name)s"
 
 
+class RustPackageYank(Content):
+    """
+    A marker content type indicating a crate version is yanked in a repository.
+
+    This is a per-repository marker: its presence in a repository version means
+    the (name, vers) pair is yanked in that repository. Its absence means it is
+    not yanked. This allows yanked status to vary across repositories without
+    mutating the global RustContent object.
+    """
+
+    TYPE = "rust_yank"
+    repo_key_fields = ("name", "vers")
+
+    name = models.CharField(max_length=255, db_index=True)
+    vers = models.CharField(max_length=64, db_index=True)
+    _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
+
+    class Meta:
+        default_related_name = "%(app_label)s_%(model_name)s"
+        unique_together = (("name", "vers", "_pulp_domain"),)
+
+
 class RustRepository(Repository):
     """
     A Repository for RustContent.
@@ -271,7 +287,7 @@ class RustRepository(Repository):
 
     TYPE = "rust"
 
-    CONTENT_TYPES = [RustContent]
+    CONTENT_TYPES = [RustContent, RustPackageYank]
     REMOTE_TYPES = [RustRemote]
     PULL_THROUGH_SUPPORTED = True
 
