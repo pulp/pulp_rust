@@ -6,9 +6,7 @@ from urllib.parse import urljoin
 import pytest
 from aiohttp.client_exceptions import ClientResponseError
 
-from pulp_rust.tests.functional.utils import download_file
-
-CRATES_IO_URL = "sparse+https://index.crates.io/"
+from pulp_rust.tests.functional.utils import CRATES_IO_URL, download_file
 
 
 def test_config_json(

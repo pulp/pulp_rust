@@ -1,13 +1,17 @@
 """Tests for Cargo pull-through caching via the sparse index proxy."""
 
 import hashlib
+import json
 from urllib.parse import urljoin
 
 import pytest
 
-from pulp_rust.tests.functional.utils import download_file
-
-CRATES_IO_URL = "sparse+https://index.crates.io/"
+from pulp_rust.tests.functional.utils import (
+    CRATES_IO_URL,
+    assert_index_entry_matches_upstream,
+    download_file,
+    get_index_entry,
+)
 
 
 def test_pull_through_sparse_index(
@@ -112,43 +116,11 @@ def test_pull_through_on_demand_creates_content(
     assert content_response.count == 1
 
 
-def test_pull_through_on_demand_add_cached_content(
-    rust_remote_factory,
-    rust_repo_factory,
-    rust_distribution_factory,
-    rust_repo_api_client,
-    monitor_task,
-    cargo_registry_url,
-):
-    """on_demand: add_cached_content should add pulled-through content to a new repo version."""
-    remote = rust_remote_factory(url=CRATES_IO_URL, policy="on_demand")
-    repository = rust_repo_factory(remote=remote.pulp_href)
-    distribution = rust_distribution_factory(
-        remote=remote.pulp_href, repository=repository.pulp_href
-    )
-
-    # Download a crate to trigger caching
-    unit_path = "api/v1/crates/itoa/1.0.0/download"
-    pulp_unit_url = urljoin(cargo_registry_url(distribution.base_path), unit_path)
-    download_file(pulp_unit_url)
-
-    # Add cached content to the repository
-    monitor_task(
-        rust_repo_api_client.add_cached_content(
-            repository.pulp_href, {"remote": remote.pulp_href}
-        ).task
-    )
-
-    repository = rust_repo_api_client.read(repository.pulp_href)
-    assert not repository.latest_version_href.endswith("/versions/0/")
-
-
 def test_pull_through_on_demand_serves_from_cache_without_remote(
     rust_remote_factory,
     rust_repo_factory,
     rust_distribution_factory,
     rust_distro_api_client,
-    rust_repo_api_client,
     monitor_task,
     cargo_registry_url,
 ):
@@ -163,13 +135,6 @@ def test_pull_through_on_demand_serves_from_cache_without_remote(
     pulp_unit_url = urljoin(cargo_registry_url(distribution.base_path), unit_path)
     first_download = download_file(pulp_unit_url)
     first_checksum = hashlib.sha256(first_download.body).hexdigest()
-
-    # Add cached content to the repository
-    monitor_task(
-        rust_repo_api_client.add_cached_content(
-            repository.pulp_href, {"remote": remote.pulp_href}
-        ).task
-    )
 
     # Remove the remote from the distribution
     monitor_task(
@@ -214,7 +179,6 @@ def test_pull_through_multiple_crates_on_demand(
     rust_distribution_factory,
     rust_content_api_client,
     rust_repo_api_client,
-    monitor_task,
     cargo_registry_url,
 ):
     """on_demand: downloading multiple crates should cache all of them."""
@@ -232,12 +196,142 @@ def test_pull_through_multiple_crates_on_demand(
     assert rust_content_api_client.list(name="itoa", vers="1.0.0").count == 1
     assert rust_content_api_client.list(name="cfg-if", vers="1.0.0").count == 1
 
-    # add_cached_content should pick up both
-    monitor_task(
-        rust_repo_api_client.add_cached_content(
-            repository.pulp_href, {"remote": remote.pulp_href}
-        ).task
-    )
-
+    # Content should have been automatically added to the repository
     repository = rust_repo_api_client.read(repository.pulp_href)
     assert not repository.latest_version_href.endswith("/versions/0/")
+
+
+def test_pull_through_on_demand_preserves_metadata(
+    delete_orphans_pre,
+    rust_remote_factory,
+    rust_repo_factory,
+    rust_distribution_factory,
+    rust_content_api_client,
+    cargo_registry_url,
+):
+    """on_demand: cached content should have full metadata (deps, features).
+
+    Ensure that all metadata is saved appropriately when a package is created via
+    pull-through caching.
+    """
+    remote = rust_remote_factory(url=CRATES_IO_URL, policy="on_demand")
+    repository = rust_repo_factory(remote=remote.pulp_href)
+    distribution = rust_distribution_factory(
+        remote=remote.pulp_href, repository=repository.pulp_href
+    )
+
+    # serde has dependencies (serde_derive) and features in most versions
+    crate_name, crate_version = "serde", "1.0.210"
+    unit_path = f"api/v1/crates/{crate_name}/{crate_version}/download"
+    pulp_unit_url = urljoin(cargo_registry_url(distribution.base_path), unit_path)
+    download_file(pulp_unit_url)
+
+    # Verify the content record was created with full metadata
+    content_response = rust_content_api_client.list(name=crate_name, vers=crate_version)
+    assert content_response.count == 1
+    content = content_response.results[0]
+
+    # Should have dependencies (serde has serde_derive as an optional dep)
+    assert len(content.dependencies) > 0
+    dep_names = [d.name for d in content.dependencies]
+    assert "serde_derive" in dep_names
+
+    # Should have features
+    assert len(content.features) > 0
+    assert "derive" in content.features
+
+    # Fetch the sparse index from Pulp (now served from local data)
+    index_url = urljoin(cargo_registry_url(distribution.base_path), f"se/rd/{crate_name}")
+    index_response = download_file(index_url)
+    assert index_response.response_obj.status == 200
+
+    body = index_response.body.decode("utf-8")
+    lines = body.strip().split("\n")
+    # Find the line for our version
+    version_entry = None
+    for line in lines:
+        entry = json.loads(line)
+        if entry["vers"] == crate_version:
+            version_entry = entry
+            break
+
+    assert version_entry is not None, f"Version {crate_version} not found in index"
+    assert len(version_entry["deps"]) > 0, "Index entry has no dependencies"
+    index_dep_names = [d["name"] for d in version_entry["deps"]]
+    assert "serde_derive" in index_dep_names
+    assert len(version_entry["features"]) > 0, "Index entry has no features"
+
+
+# ---------------------------------------------------------------------------
+# Index fidelity tests: compare Pulp output against crates.io for each mode
+# ---------------------------------------------------------------------------
+
+
+def test_index_fidelity_streamed(
+    rust_remote_factory,
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    upstream_index_entry,
+):
+    """streamed: proxied sparse index entry should match crates.io exactly."""
+    remote = rust_remote_factory(url=CRATES_IO_URL, policy="streamed")
+    repository = rust_repo_factory(remote=remote.pulp_href)
+    distribution = rust_distribution_factory(
+        remote=remote.pulp_href, repository=repository.pulp_href
+    )
+
+    base = cargo_registry_url(distribution.base_path)
+    pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
+    assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)
+
+
+def test_index_fidelity_on_demand_proxied(
+    rust_remote_factory,
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    upstream_index_entry,
+):
+    """on_demand: index with no local content proxies upstream and should match."""
+    remote = rust_remote_factory(url=CRATES_IO_URL, policy="on_demand")
+    repository = rust_repo_factory(remote=remote.pulp_href)
+    distribution = rust_distribution_factory(
+        remote=remote.pulp_href, repository=repository.pulp_href
+    )
+
+    base = cargo_registry_url(distribution.base_path)
+
+    # No local content in this repo, so the index is proxied from upstream
+    pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
+    assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)
+
+
+def test_index_fidelity_on_demand_cached(
+    delete_orphans_pre,
+    rust_remote_factory,
+    rust_repo_factory,
+    rust_distribution_factory,
+    rust_content_api_client,
+    cargo_registry_url,
+    upstream_index_entry,
+):
+    """on_demand: after caching, the locally-served index entry should match crates.io."""
+    remote = rust_remote_factory(url=CRATES_IO_URL, policy="on_demand")
+    repository = rust_repo_factory(remote=remote.pulp_href)
+    distribution = rust_distribution_factory(
+        remote=remote.pulp_href, repository=repository.pulp_href
+    )
+
+    base = cargo_registry_url(distribution.base_path)
+
+    # Download the .crate to trigger content creation
+    download_file(urljoin(base, "api/v1/crates/serde/1.0.210/download"))
+
+    # Verify content was cached
+    content = rust_content_api_client.list(name="serde", vers="1.0.210")
+    assert content.count == 1, "Content was not cached after on_demand download"
+
+    # Now the index is served from local data — compare against upstream
+    pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
+    assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)

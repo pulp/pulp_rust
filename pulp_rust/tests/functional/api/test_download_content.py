@@ -7,7 +7,7 @@ the same scenarios (and more) across both on_demand and streamed policies.
 import hashlib
 from urllib.parse import urljoin
 
-from pulp_rust.tests.functional.utils import download_file
+from pulp_rust.tests.functional.utils import CRATES_IO_URL, download_file
 
 
 def test_download_content(
@@ -27,7 +27,7 @@ def test_download_content(
     3. Verify that the content was automatically added to the repository.
     4. Remove the remote and verify the content is still served from cache.
     """
-    remote = rust_remote_factory(url="sparse+https://index.crates.io/")
+    remote = rust_remote_factory(url=CRATES_IO_URL)
     repository = rust_repo_factory(remote=remote.pulp_href)
     distribution = rust_distribution_factory(
         remote=remote.pulp_href, repository=repository.pulp_href

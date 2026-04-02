@@ -178,19 +178,21 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         for crate_version in crate_versions:
             deps = []
             for dep in crate_version.dependencies.all():
-                deps.append(
-                    {
-                        "name": dep.name,
-                        "req": dep.req,
-                        "features": dep.features,
-                        "optional": dep.optional,
-                        "default_features": dep.default_features,
-                        "target": dep.target,
-                        "kind": dep.kind,
-                        "registry": dep.registry,
-                        "package": dep.package,
-                    }
-                )
+                dep_obj = {
+                    "name": dep.name,
+                    "req": dep.req,
+                    "features": dep.features,
+                    "optional": dep.optional,
+                    "default_features": dep.default_features,
+                    "target": dep.target,
+                    "kind": dep.kind,
+                }
+                # crates.io omits these keys when not set
+                if dep.registry is not None:
+                    dep_obj["registry"] = dep.registry
+                if dep.package is not None:
+                    dep_obj["package"] = dep.package
+                deps.append(dep_obj)
 
             version_obj = {
                 "name": crate_version.name,

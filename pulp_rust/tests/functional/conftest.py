@@ -1,4 +1,5 @@
 import uuid
+from urllib.parse import urljoin
 
 import pytest
 
@@ -8,6 +9,12 @@ from pulpcore.client.pulp_rust import (
     DistributionsRustApi,
     RemotesRustApi,
     RepositoriesRustApi,
+)
+
+from pulp_rust.tests.functional.utils import (
+    CRATES_IO_URL,
+    download_file,
+    get_index_entry,
 )
 
 
@@ -86,3 +93,54 @@ def cargo_registry_url(bindings_cfg, pulp_settings):
         return f"{bindings_cfg.host}/pulp/cargo/{base_path}/"
 
     return _cargo_registry_url
+
+
+@pytest.fixture
+def populated_repo(
+    rust_remote_factory,
+    rust_repo_factory,
+    rust_distribution_factory,
+    rust_repo_api_client,
+    rust_distro_api_client,
+    monitor_task,
+    cargo_registry_url,
+):
+    """Create a repo with itoa 1.0.0 and 1.0.1 pulled-through via on_demand.
+
+    Content is automatically added to the repository during pull-through
+    (PULL_THROUGH_SUPPORTED = True). The remote is then detached from the
+    distribution so the index is served from local content only.
+
+    Returns a dict with 'repository', 'distribution', 'remote', and 'base_url'.
+    """
+    remote = rust_remote_factory(url=CRATES_IO_URL)
+    repository = rust_repo_factory(remote=remote.pulp_href)
+    distribution = rust_distribution_factory(
+        remote=remote.pulp_href, repository=repository.pulp_href
+    )
+    base_url = cargo_registry_url(distribution.base_path)
+
+    # Pull through two versions — each download automatically creates a new
+    # repo version with the content added (via PULL_THROUGH_SUPPORTED).
+    for version in ("1.0.0", "1.0.1"):
+        unit_path = f"api/v1/crates/itoa/{version}/download"
+        download_file(urljoin(base_url, unit_path))
+
+    # Detach remote from the distribution so the index is served from local
+    # content only (the distribution's remote controls the proxy fallback).
+    monitor_task(
+        rust_distro_api_client.partial_update(distribution.pulp_href, {"remote": None}).task
+    )
+
+    return {
+        "repository": rust_repo_api_client.read(repository.pulp_href),
+        "distribution": rust_distro_api_client.read(distribution.pulp_href),
+        "remote": remote,
+        "base_url": base_url,
+    }
+
+
+@pytest.fixture(scope="module")
+def upstream_index_entry():
+    """Fetch the canonical index entry for serde 1.0.210 from crates.io (once per module)."""
+    return get_index_entry("https://index.crates.io/", "se/rd/serde", "1.0.210")
