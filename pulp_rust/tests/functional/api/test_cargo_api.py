@@ -28,7 +28,7 @@ def test_config_json(
     assert "dl" in config
     assert "api" in config
     assert "auth-required" in config
-    assert "/api/v1/crates/" in config["dl"]
+    assert "/api/v1/crates" in config["dl"]
 
 
 def test_config_json_accept_text_plain(

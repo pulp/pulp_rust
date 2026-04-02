@@ -1,4 +1,8 @@
-"""Tests that verify download of content served by Pulp."""
+"""Tests that verify download of content served by Pulp.
+
+NOTE: This test overlaps with tests in test_pull_through_caching.py which cover
+the same scenarios (and more) across both on_demand and streamed policies.
+"""
 
 import hashlib
 from urllib.parse import urljoin
