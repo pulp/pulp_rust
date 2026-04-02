@@ -5,8 +5,8 @@ import urllib.error
 
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
-from rest_framework.response import Response
 from rest_framework.exceptions import Throttled
+from rest_framework.renderers import BaseRenderer
 from django.core.exceptions import ObjectDoesNotExist
 from django.shortcuts import redirect, get_object_or_404
 
@@ -30,13 +30,22 @@ from pulp_rust.app.serializers import (
 log = logging.getLogger(__name__)
 
 BASE_CONTENT_URL = urljoin(settings.CONTENT_ORIGIN, settings.CONTENT_PATH_PREFIX)
-BASE_API_URL = urljoin(settings.CRATES_IO_API_HOSTNAME, "/pulp/cargo/")
-CRATES_IO_API = "/api/v1/crates/"
+
+
+class PlainTextRenderer(BaseRenderer):
+    """Renderer for text/plain responses (Cargo sends Accept: text/plain)."""
+
+    media_type = "text/plain"
+    format = "txt"
+
+    def render(self, data, accepted_media_type=None, renderer_context=None):
+        return data
 
 
 class ApiMixin:
     """Mixin to get index specific info."""
 
+    renderer_classes = [PlainTextRenderer]
     _distro = None
 
     @property
@@ -88,13 +97,13 @@ class ApiMixin:
         domain_name = get_domain().name
         repo = self.kwargs["repo"]
         if settings.DOMAIN_ENABLED:
+            cargo_base = request.build_absolute_uri(f"/pulp/cargo/{domain_name}/{repo}/")
             self.base_content_url = urljoin(BASE_CONTENT_URL, f"pulp/cargo/{domain_name}/{repo}/")
-            self.base_api_url = urljoin(BASE_API_URL, f"{domain_name}/{repo}/")
-            self.base_download_url = urljoin(BASE_API_URL, f"{domain_name}/{repo}{CRATES_IO_API}")
         else:
+            cargo_base = request.build_absolute_uri(f"/pulp/cargo/{repo}/")
             self.base_content_url = urljoin(BASE_CONTENT_URL, f"pulp/cargo/{repo}/")
-            self.base_api_url = urljoin(BASE_API_URL, f"{repo}/")
-            self.base_download_url = urljoin(BASE_API_URL, f"{repo}{CRATES_IO_API}")
+        self.base_api_url = cargo_base
+        self.base_download_url = f"{cargo_base}api/v1/crates"
 
     @classmethod
     def urlpattern(cls):
@@ -221,13 +230,12 @@ class IndexRoot(ApiMixin, ViewSet):
     @extend_schema(responses={200: IndexRootSerializer}, summary="Get index info")
     def retrieve(self, request, repo):
         """Gets index route."""
-        return Response(
-            data={
-                "dl": self.base_download_url,
-                "api": self.base_api_url,
-                "auth-required": False,
-            }
-        )
+        data = {
+            "dl": self.base_download_url,
+            "api": self.base_api_url,
+            "auth-required": False,
+        }
+        return HttpResponse(json.dumps(data), content_type="application/json")
 
 
 class CargoDownloadApiView(APIView):
@@ -238,6 +246,7 @@ class CargoDownloadApiView(APIView):
     # Authentication disabled for now
     authentication_classes = []
     permission_classes = []
+    renderer_classes = [PlainTextRenderer]
 
     def get_full_path(self, base_path, pulp_domain=None):  # TODO: replace with ApiMixin?
         if settings.DOMAIN_ENABLED:
@@ -246,13 +255,9 @@ class CargoDownloadApiView(APIView):
         return base_path
 
     def redirect_to_content_app(self, distribution, relative_path, request):
-        scheme = request.META.get("HTTP_X_FORWARDED_PROTO", request.scheme)
-        hostname = request.META.get("HTTP_X_FORWARDED_HOST", request.get_host())
-        content_origin = f"{scheme}://{hostname}"
-        return redirect(
-            f"{content_origin}{settings.CONTENT_PATH_PREFIX}"
-            f"{self.get_full_path(distribution.base_path)}/{relative_path}"
-        )
+        full_path = self.get_full_path(distribution.base_path)
+        content_path = f"{settings.CONTENT_PATH_PREFIX}{full_path}/{relative_path}"
+        return redirect(request.build_absolute_uri(content_path))
 
     def get_distribution(self):
         return get_object_or_404(

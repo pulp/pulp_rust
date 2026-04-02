@@ -31,6 +31,23 @@ def test_config_json(
     assert "/api/v1/crates/" in config["dl"]
 
 
+def test_config_json_accept_text_plain(
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+):
+    """config.json should be served when Accept: text/plain is sent (as Cargo does)."""
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(repository=repository.pulp_href)
+
+    config_url = urljoin(cargo_registry_url(distribution.base_path), "config.json")
+    downloaded = download_file(config_url, headers={"Accept": "text/plain"})
+    assert downloaded.response_obj.status == 200
+
+    config = json.loads(downloaded.body)
+    assert "dl" in config
+
+
 def test_config_json_dl_points_to_pulp(
     rust_remote_factory,
     rust_repo_factory,
