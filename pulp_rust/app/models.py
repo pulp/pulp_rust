@@ -3,6 +3,9 @@ import urllib.request
 from logging import getLogger
 
 from django.db import models
+from django_lifecycle import hook, AFTER_CREATE
+
+from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
 
 from pulpcore.plugin.models import (
     Content,
@@ -106,15 +109,32 @@ class RustContent(Content):
         Create an unsaved RustContent from a downloaded .crate artifact.
 
         Called by pulpcore's content handler during pull-through caching.
-        Only populates name, version, and checksum -- dependency and feature
-        metadata is served from the upstream sparse index via the proxy.
+        Extracts full metadata (dependencies, features, etc.) from the
+        Cargo.toml inside the .crate tarball.
         """
         crate_name, version = _parse_crate_relative_path(relative_path)
-        return RustContent(
+        cargo_toml = extract_cargo_toml(artifact.file.path, crate_name, version)
+
+        content = RustContent(
             name=crate_name,
             vers=version,
             cksum=artifact.sha256,
+            features=cargo_toml.get("features", {}),
+            links=cargo_toml.get("package", {}).get("links"),
+            rust_version=cargo_toml.get("package", {}).get("rust-version"),
         )
+        # Store parsed dep data for the AFTER_CREATE hook to consume
+        content._parsed_deps = extract_dependencies(cargo_toml)
+        return content
+
+    @hook(AFTER_CREATE)
+    def _create_dependencies_from_parsed_data(self):
+        """Create RustDependency records from data parsed during pull-through."""
+        parsed_deps = getattr(self, "_parsed_deps", None)
+        if parsed_deps:
+            RustDependency.objects.bulk_create(
+                [RustDependency(content=self, **dep) for dep in parsed_deps]
+            )
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
