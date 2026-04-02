@@ -1,12 +1,13 @@
 import json
 import logging
+import tempfile
 import urllib.request
 import urllib.error
 
+from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 from rest_framework.exceptions import Throttled
-from rest_framework.renderers import BaseRenderer
 from django.core.exceptions import ObjectDoesNotExist
 from django.shortcuts import redirect, get_object_or_404
 
@@ -20,7 +21,6 @@ from dynaconf import settings
 from urllib.parse import urljoin
 
 from pulpcore.plugin.util import get_domain
-
 from pulpcore.plugin.tasking import dispatch
 
 from pulp_rust.app.models import (
@@ -29,7 +29,12 @@ from pulp_rust.app.models import (
     RustPackageYank,
     _strip_sparse_prefix,
 )
-from pulp_rust.app.tasks import ayank_package, aunyank_package
+from pulp_rust.app.tasks import (
+    ayank_package,
+    aunyank_package,
+    apublish_package,
+    parse_cargo_publish_body,
+)
 from pulp_rust.app.serializers import (
     IndexRootSerializer,
     RustContentSerializer,
@@ -110,7 +115,7 @@ class ApiMixin:
         else:
             cargo_base = request.build_absolute_uri(f"/pulp/cargo/{repo}/")
             self.base_content_url = urljoin(BASE_CONTENT_URL, f"pulp/cargo/{repo}/")
-        self.base_api_url = cargo_base
+        self.base_api_url = cargo_base.rstrip("/")
         self.base_download_url = f"{cargo_base}api/v1/crates"
 
     @classmethod
@@ -253,6 +258,101 @@ class IndexRoot(ApiMixin, ViewSet):
         return HttpResponse(json.dumps(data), content_type="application/json")
 
 
+class CargoPublishApiView(APIView):
+    """
+    View for Cargo's crate publish endpoint (PUT /api/v1/crates/new).
+
+    Parses the custom binary format from ``cargo publish`` and dispatches a task
+    to create the artifact, content, and new repository version.
+
+    See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish
+    """
+
+    # TODO: Authentication/authorization is not yet implemented.
+    # All users with network access can publish. In production, this should
+    # require a valid token and verify crate ownership.
+    authentication_classes = []
+    permission_classes = []
+    renderer_classes = [JSONRenderer]
+
+    def get_distribution(self):
+        return get_object_or_404(
+            RustDistribution, base_path=self.kwargs["repo"], pulp_domain=get_domain()
+        )
+
+    @staticmethod
+    def _error_response(detail, status=400):
+        return HttpResponse(
+            json.dumps({"errors": [{"detail": detail}]}),
+            content_type="application/json",
+            status=status,
+        )
+
+    def put(self, request, **kwargs):
+        """
+        Handle ``cargo publish`` requests.
+
+        Parses the binary body (JSON metadata + .crate tarball), validates the
+        distribution allows uploads and the crate doesn't already exist in the
+        repository, then dispatches a publish task.
+        """
+        distro = self.get_distribution()
+
+        if not distro.allow_uploads:
+            return self._error_response("this registry does not allow uploads", status=403)
+
+        if not distro.repository:
+            return self._error_response(
+                "no repository associated with this distribution", status=404
+            )
+
+        try:
+            metadata, crate_bytes = parse_cargo_publish_body(request.body)
+        except Exception:
+            return self._error_response("invalid publish request body")
+
+        name = metadata.get("name")
+        vers = metadata.get("vers")
+        if not name or not vers:
+            return self._error_response("missing required fields: name, vers")
+
+        # Check for duplicates before dispatching — crates.io rejects re-publishing
+        repo_version = distro.repository.latest_version()
+        if RustContent.objects.filter(pk__in=repo_version.content, name=name, vers=vers).exists():
+            return self._error_response(f"crate version `{name}@{vers}` is already uploaded")
+
+        # Write the .crate bytes to a temp file — raw bytes can't be passed
+        # through dispatch() because task kwargs are stored as JSON.
+        tmp = tempfile.NamedTemporaryFile(suffix=".crate", delete=False)
+        tmp.write(crate_bytes)
+        tmp.close()
+
+        task = dispatch(
+            apublish_package,
+            exclusive_resources=[distro.repository],
+            immediate=True,
+            kwargs={
+                "repository_pk": str(distro.repository.pk),
+                "metadata": metadata,
+                "crate_path": tmp.name,
+            },
+        )
+        has_task_completed(task)
+
+        return HttpResponse(
+            json.dumps(
+                {
+                    "warnings": {
+                        "invalid_categories": [],
+                        "invalid_badges": [],
+                        "other": [],
+                    }
+                }
+            ),
+            content_type="application/json",
+        )
+
+
 class CargoDownloadApiView(APIView):
     """
     View for Cargo's crate download, readme, yank, and unyank endpoints.
@@ -261,7 +361,7 @@ class CargoDownloadApiView(APIView):
     # Authentication disabled for now
     authentication_classes = []
     permission_classes = []
-    renderer_classes = [PlainTextRenderer]
+    renderer_classes = [PlainTextRenderer, JSONRenderer]
 
     def get_full_path(self, base_path, pulp_domain=None):  # TODO: replace with ApiMixin?
         if settings.DOMAIN_ENABLED:
