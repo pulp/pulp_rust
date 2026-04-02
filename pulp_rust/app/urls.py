@@ -1,7 +1,12 @@
 from django.conf import settings
 from django.urls import path
 
-from pulp_rust.app.views import IndexRoot, CargoIndexApiViewSet, CargoDownloadApiView
+from pulp_rust.app.views import (
+    IndexRoot,
+    CargoIndexApiViewSet,
+    CargoDownloadApiView,
+    CargoPublishApiView,
+)
 
 if settings.DOMAIN_ENABLED:
     CRATES_IO_URL = "pulp/cargo/<slug:pulp_domain>/<slug:repo>/"
@@ -10,6 +15,11 @@ else:
 
 
 urlpatterns = [
+    path(
+        CRATES_IO_URL + "api/v1/crates/new",
+        CargoPublishApiView.as_view(),
+        name="cargo-publish-api",
+    ),
     path(
         CRATES_IO_URL + "api/v1/crates/<str:name>/<str:version>/<path:rest>",
         CargoDownloadApiView.as_view(),

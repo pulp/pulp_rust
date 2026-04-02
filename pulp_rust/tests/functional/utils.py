@@ -1,10 +1,13 @@
+import hashlib
 import json
+import tempfile
 
 import aiohttp
 import asyncio
 from dataclasses import dataclass
 
 CRATES_IO_URL = "sparse+https://index.crates.io/"
+CRATES_IO_DOWNLOAD_URL = "https://static.crates.io/crates/"
 
 # Fields from the sparse index that Pulp should faithfully reproduce.
 # "yanked" is excluded because it depends on per-repo yank state, not upstream.
@@ -68,6 +71,20 @@ def get_index_entry(url, sparse_path, version):
     if entry is None:
         raise AssertionError(f"Version {version} not found in index at {full_url}")
     return entry
+
+
+def download_crate_from_upstream(name, version):
+    """Download a .crate file directly from crates.io and return (path, sha256)."""
+    url = f"{CRATES_IO_DOWNLOAD_URL}{name}/{name}-{version}.crate"
+    downloaded = download_file(url)
+    assert downloaded.response_obj.status == 200
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".crate", delete=False)
+    tmp.write(downloaded.body)
+    tmp.flush()
+
+    cksum = hashlib.sha256(downloaded.body).hexdigest()
+    return tmp.name, cksum
 
 
 def assert_index_entry_matches_upstream(pulp_entry, upstream_entry):
