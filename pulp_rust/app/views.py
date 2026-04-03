@@ -1,5 +1,7 @@
 import json
 import logging
+import os
+import struct
 import tempfile
 import urllib.request
 import urllib.error
@@ -29,6 +31,7 @@ from pulp_rust.app.models import (
     RustPackageYank,
     _strip_sparse_prefix,
 )
+from pulp_rust.app.auth import require_cargo_token
 from pulp_rust.app.tasks import (
     ayank_package,
     aunyank_package,
@@ -76,7 +79,7 @@ class ApiMixin:
         try:
             return distro_qs.get(base_path=repo, pulp_domain=get_domain())
         except ObjectDoesNotExist:
-            raise Http404(f"No RustDistribution found for base_path {repo}")  # TODO: broken
+            raise Http404(f"No RustDistribution found for base_path {repo}")
 
     @staticmethod
     def get_repository_version(distribution):
@@ -180,7 +183,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
             index_url = _strip_sparse_prefix(remote.url).rstrip("/")
             upstream_url = f"{index_url}/{path}"
             try:
-                response = urllib.request.urlopen(upstream_url)
+                response = urllib.request.urlopen(upstream_url, timeout=30)
                 return HttpResponse(response.read(), content_type="text/plain")
             except urllib.error.HTTPError as e:
                 if e.code == 404:
@@ -258,6 +261,23 @@ class IndexRoot(ApiMixin, ViewSet):
         return HttpResponse(json.dumps(data), content_type="application/json")
 
 
+class CargoMeApiView(APIView):
+    """
+    Auth verification endpoint for ``cargo login``.
+
+    Cargo calls GET /me after login to verify the token is valid.
+    See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html
+    """
+
+    authentication_classes = []
+    permission_classes = []
+    renderer_classes = [JSONRenderer]
+
+    @require_cargo_token
+    def get(self, request, **kwargs):
+        return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
+
+
 class CargoPublishApiView(APIView):
     """
     View for Cargo's crate publish endpoint (PUT /api/v1/crates/new).
@@ -268,9 +288,8 @@ class CargoPublishApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish
     """
 
-    # TODO: Authentication/authorization is not yet implemented.
-    # All users with network access can publish. In production, this should
-    # require a valid token and verify crate ownership.
+    # Authentication uses a stub token via @require_cargo_token decorator.
+    # TODO: Replace with proper per-user token auth and RBAC integration.
     authentication_classes = []
     permission_classes = []
     renderer_classes = [JSONRenderer]
@@ -288,6 +307,7 @@ class CargoPublishApiView(APIView):
             status=status,
         )
 
+    @require_cargo_token
     def put(self, request, **kwargs):
         """
         Handle ``cargo publish`` requests.
@@ -308,7 +328,7 @@ class CargoPublishApiView(APIView):
 
         try:
             metadata, crate_bytes = parse_cargo_publish_body(request.body)
-        except Exception:
+        except (struct.error, json.JSONDecodeError, UnicodeDecodeError):
             return self._error_response("invalid publish request body")
 
         name = metadata.get("name")
@@ -327,17 +347,20 @@ class CargoPublishApiView(APIView):
         tmp.write(crate_bytes)
         tmp.close()
 
-        task = dispatch(
-            apublish_package,
-            exclusive_resources=[distro.repository],
-            immediate=True,
-            kwargs={
-                "repository_pk": str(distro.repository.pk),
-                "metadata": metadata,
-                "crate_path": tmp.name,
-            },
-        )
-        has_task_completed(task)
+        try:
+            task = dispatch(
+                apublish_package,
+                exclusive_resources=[distro.repository],
+                immediate=True,
+                kwargs={
+                    "repository_pk": str(distro.repository.pk),
+                    "metadata": metadata,
+                    "crate_path": tmp.name,
+                },
+            )
+            has_task_completed(task)
+        finally:
+            os.unlink(tmp.name)
 
         return HttpResponse(
             json.dumps(
@@ -363,7 +386,7 @@ class CargoDownloadApiView(APIView):
     permission_classes = []
     renderer_classes = [PlainTextRenderer, JSONRenderer]
 
-    def get_full_path(self, base_path, pulp_domain=None):  # TODO: replace with ApiMixin?
+    def get_full_path(self, base_path, pulp_domain=None):
         if settings.DOMAIN_ENABLED:
             domain = pulp_domain or get_domain()
             return f"{domain.name}/{base_path}"
@@ -393,10 +416,11 @@ class CargoDownloadApiView(APIView):
             relative_path = f"{name}/{name}-{version}.crate"
             return self.redirect_to_content_app(distro, relative_path, request)
         elif rest == "readme":
-            raise NotImplementedError("Readme endpoint is not yet implemented")
+            raise Http404("Readme endpoint is not yet implemented")
         else:
             raise Http404(f"Unknown action: {rest}")
 
+    @require_cargo_token
     def delete(self, request, name, version, rest, **kwargs):
         """
         Responds to DELETE requests for yanking crate versions.
@@ -436,6 +460,7 @@ class CargoDownloadApiView(APIView):
         has_task_completed(task)
         return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
+    @require_cargo_token
     def put(self, request, name, version, rest, **kwargs):
         """
         Responds to PUT requests for unyanking crate versions.

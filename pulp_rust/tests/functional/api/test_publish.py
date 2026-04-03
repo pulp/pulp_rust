@@ -1,81 +1,22 @@
-"""Tests for the Cargo publish API (PUT /api/v1/crates/new)."""
+"""Tests for the Cargo publish API (PUT /api/v1/crates/new).
 
-import json
-import struct
-
-import requests
+NOTE: The test helpers (build_publish_metadata, cargo_publish) reuse
+pulp_rust's own extract_cargo_toml / extract_dependencies to build the
+publish request — the same code the server uses to process it.  The index
+fidelity tests below validate that code path by comparing Pulp's index
+output against independently-fetched crates.io data.  If those app
+functions ever produce wrong results, these fidelity tests are what will
+catch it.  Other test modules (auth, yank) also depend on the same helpers,
+so keep these fidelity checks passing.
+"""
 
 from pulp_rust.tests.functional.utils import (
     assert_index_entry_matches_upstream,
+    build_publish_metadata,
+    cargo_publish,
     download_crate_from_upstream,
     get_index_entry,
 )
-from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
-
-
-def build_cargo_publish_body(metadata, crate_bytes):
-    """Build the binary request body that ``cargo publish`` sends.
-
-    Format (per Cargo registry web API spec):
-        4 bytes: JSON metadata length (little-endian u32)
-        N bytes: JSON metadata (UTF-8)
-        4 bytes: .crate file length (little-endian u32)
-        M bytes: .crate file (binary)
-    """
-    json_bytes = json.dumps(metadata).encode("utf-8")
-    return (
-        struct.pack("<I", len(json_bytes))
-        + json_bytes
-        + struct.pack("<I", len(crate_bytes))
-        + crate_bytes
-    )
-
-
-def cargo_publish(url, metadata, crate_bytes):
-    """Send a publish request mimicking ``cargo publish``.
-
-    Cargo sends Content-Type: application/json even though the body is a
-    custom binary format, not valid JSON.
-    """
-    body = build_cargo_publish_body(metadata, crate_bytes)
-    return requests.put(
-        f"{url}api/v1/crates/new",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        verify=False,
-    )
-
-
-def build_publish_metadata(crate_path, crate_name, crate_version):
-    """Extract metadata from a .crate file and format it for the publish API.
-
-    Cargo uses "version_req" (not "req") and "explicit_name_in_toml" (not "package")
-    per the Cargo registry web API spec.
-    """
-    cargo_toml = extract_cargo_toml(crate_path, crate_name, crate_version)
-    deps = extract_dependencies(cargo_toml)
-
-    return {
-        "name": crate_name,
-        "vers": crate_version,
-        "deps": [
-            {
-                "name": dep["name"],
-                "version_req": dep["req"],
-                "features": dep["features"],
-                "optional": dep["optional"],
-                "default_features": dep["default_features"],
-                "target": dep["target"],
-                "kind": dep["kind"],
-                "registry": dep.get("registry"),
-                "explicit_name_in_toml": dep.get("package"),
-            }
-            for dep in deps
-        ],
-        "features": cargo_toml.get("features", {}),
-        "links": cargo_toml.get("package", {}).get("links"),
-        "rust_version": cargo_toml.get("package", {}).get("rust-version"),
-    }
 
 
 def test_cargo_publish_and_index_fidelity(
@@ -186,6 +127,34 @@ def test_cargo_publish_ignores_tampered_json_metadata(
     # The index entry should match crates.io (i.e. the Cargo.toml), not the tampered JSON
     pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
     assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)
+
+
+def test_cargo_publish_octet_stream_content_type(
+    delete_orphans_pre,
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+):
+    """Publish should accept Content-Type: application/octet-stream.
+
+    Current Cargo omits Content-Type entirely; a proposed upstream fix
+    will send application/octet-stream instead.  The server must accept both.
+    """
+    crate_name = "serde"
+    crate_version = "1.0.210"
+
+    crate_path, _ = download_crate_from_upstream(crate_name, crate_version)
+    with open(crate_path, "rb") as f:
+        crate_bytes = f.read()
+
+    metadata = build_publish_metadata(crate_path, crate_name, crate_version)
+
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
+    base = cargo_registry_url(distribution.base_path)
+
+    response = cargo_publish(base, metadata, crate_bytes, content_type="application/octet-stream")
+    assert response.status_code == 200, response.text
 
 
 def test_cargo_publish_uploads_disabled(
