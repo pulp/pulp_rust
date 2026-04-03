@@ -1,30 +1,26 @@
 """Functional tests for Cargo yank/unyank support."""
 
-import json
 import hashlib
+import json
 from urllib.parse import urljoin
 
-import aiohttp
-import asyncio
 import pytest
-from aiohttp.client_exceptions import ClientResponseError
+from requests.exceptions import HTTPError
 
 from pulp_rust.tests.functional.utils import (
+    CARGO_AUTH_HEADERS,
     CRATES_IO_URL,
+    cargo_api_request,
     download_file,
     get_index_entry,
 )
 
 
-def cargo_api_request(url, method="DELETE"):
-    """Make a DELETE or PUT request to the Cargo API."""
-
-    async def _request():
-        async with aiohttp.ClientSession(raise_for_status=True) as session:
-            async with session.request(method, url, verify_ssl=False) as response:
-                return json.loads(await response.read())
-
-    return asyncio.run(_request())
+def cargo_yank_request(url, method="DELETE"):
+    """Make an authenticated DELETE or PUT request to the Cargo yank/unyank API."""
+    response = cargo_api_request(method, url, headers=CARGO_AUTH_HEADERS)
+    response.raise_for_status()
+    return response.json()
 
 
 def get_all_index_entries(cargo_url, sparse_path):
@@ -84,7 +80,7 @@ def test_yank_happy_path(populated_repo):
 
     # Yank via Cargo API
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    result = cargo_api_request(yank_url, method="DELETE")
+    result = cargo_yank_request(yank_url, method="DELETE")
     assert result["ok"] is True
 
     # Verify now yanked
@@ -98,14 +94,14 @@ def test_unyank_happy_path(populated_repo):
 
     # Yank first
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url, method="DELETE")
+    cargo_yank_request(yank_url, method="DELETE")
 
     entry = get_index_entry(base_url, "it/oa/itoa", "1.0.0")
     assert entry["yanked"] is True
 
     # Unyank
     unyank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/unyank")
-    result = cargo_api_request(unyank_url, method="PUT")
+    result = cargo_yank_request(unyank_url, method="PUT")
     assert result["ok"] is True
 
     # Verify no longer yanked
@@ -127,9 +123,9 @@ def test_yank_nonexistent_package(
     base_url = cargo_registry_url(distribution.base_path)
 
     yank_url = urljoin(base_url, "api/v1/crates/nonexistent/0.0.0/yank")
-    with pytest.raises(ClientResponseError) as exc:
-        cargo_api_request(yank_url, method="DELETE")
-    assert exc.value.status == 404
+    with pytest.raises(HTTPError) as exc:
+        cargo_yank_request(yank_url, method="DELETE")
+    assert exc.value.response.status_code == 404
 
 
 def test_yank_no_repository(
@@ -141,9 +137,9 @@ def test_yank_no_repository(
     base_url = cargo_registry_url(distribution.base_path)
 
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    with pytest.raises(ClientResponseError) as exc:
-        cargo_api_request(yank_url, method="DELETE")
-    assert exc.value.status == 404
+    with pytest.raises(HTTPError) as exc:
+        cargo_yank_request(yank_url, method="DELETE")
+    assert exc.value.response.status_code == 404
 
 
 # --- Idempotency ---
@@ -155,13 +151,13 @@ def test_yank_idempotent(populated_repo, rust_repo_api_client):
     repo_href = populated_repo["repository"].pulp_href
 
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url, method="DELETE")
+    cargo_yank_request(yank_url, method="DELETE")
 
     repo_after_first = rust_repo_api_client.read(repo_href)
     first_version = repo_after_first.latest_version_href
 
     # Yank again — should be no-op
-    result = cargo_api_request(yank_url, method="DELETE")
+    result = cargo_yank_request(yank_url, method="DELETE")
     assert result["ok"] is True
 
     repo_after_second = rust_repo_api_client.read(repo_href)
@@ -177,7 +173,7 @@ def test_unyank_idempotent(populated_repo, rust_repo_api_client):
     before_version = repo_before.latest_version_href
 
     unyank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/unyank")
-    result = cargo_api_request(unyank_url, method="PUT")
+    result = cargo_yank_request(unyank_url, method="PUT")
     assert result["ok"] is True
 
     repo_after = rust_repo_api_client.read(repo_href)
@@ -219,7 +215,7 @@ def test_yank_isolation_across_repositories(
 
     # Yank in repo A only
     yank_url = urljoin(repos["a"]["base_url"], "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url, method="DELETE")
+    cargo_yank_request(yank_url, method="DELETE")
 
     # Repo A should show yanked, repo B should not
     entry_a = get_index_entry(repos["a"]["base_url"], "it/oa/itoa", "1.0.0")
@@ -229,10 +225,10 @@ def test_yank_isolation_across_repositories(
 
     # Yank in repo B too, then unyank only in A
     yank_url_b = urljoin(repos["b"]["base_url"], "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url_b, method="DELETE")
+    cargo_yank_request(yank_url_b, method="DELETE")
 
     unyank_url = urljoin(repos["a"]["base_url"], "api/v1/crates/itoa/1.0.0/unyank")
-    cargo_api_request(unyank_url, method="PUT")
+    cargo_yank_request(unyank_url, method="PUT")
 
     # A should be not-yanked, B should remain yanked
     entry_a = get_index_entry(repos["a"]["base_url"], "it/oa/itoa", "1.0.0")
@@ -253,7 +249,7 @@ def test_yank_creates_new_repo_version(populated_repo, rust_repo_api_client):
     version_before = repo_before.latest_version_href
 
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url, method="DELETE")
+    cargo_yank_request(yank_url, method="DELETE")
 
     repo_after = rust_repo_api_client.read(repo_href)
     assert repo_after.latest_version_href != version_before
@@ -268,7 +264,7 @@ def test_partial_yank(populated_repo):
 
     # Yank only 1.0.0
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url, method="DELETE")
+    cargo_yank_request(yank_url, method="DELETE")
 
     # 1.0.0 should be yanked
     entry_100 = get_index_entry(base_url, "it/oa/itoa", "1.0.0")
@@ -293,7 +289,7 @@ def test_download_still_works_after_yank(populated_repo):
 
     # Yank
     yank_url = urljoin(base_url, "api/v1/crates/itoa/1.0.0/yank")
-    cargo_api_request(yank_url, method="DELETE")
+    cargo_yank_request(yank_url, method="DELETE")
 
     # Download should still work
     after = download_file(download_url)

@@ -17,6 +17,10 @@ from pulpcore.plugin.util import get_domain_pk
 
 logger = getLogger(__name__)
 
+# Cache for the "dl" template from each registry's config.json.
+# Keyed by index URL; effectively never changes for a given registry.
+_dl_template_cache = {}
+
 
 def _strip_sparse_prefix(url):
     """Strip the sparse+ prefix from a Cargo registry URL."""
@@ -194,9 +198,8 @@ class RustDependency(models.Model):
         default="normal",
     )
 
-    # @TODO: I suspect this isn't needed
-    # URL of alternative registry if dependency comes from a non-default registry
-    # Null means the dependency is from the same registry as the parent package
+    # URL of alternative registry if dependency comes from a non-default registry.
+    # Null means the dependency is from the same registry as the parent package.
     registry = models.CharField(max_length=512, blank=True, null=True)
 
     # Original crate name if the dependency was renamed
@@ -235,11 +238,12 @@ class RustRemote(Remote):
         crate_name, version = _parse_crate_relative_path(relative_path)
         index_url = _strip_sparse_prefix(self.url).rstrip("/")
 
-        # TODO: Cache the config.json response to avoid fetching it on every request.
-        config_url = f"{index_url}/config.json"
-        response = urllib.request.urlopen(config_url)
-        config = json.loads(response.read())
-        dl_template = config["dl"]
+        if index_url not in _dl_template_cache:
+            config_url = f"{index_url}/config.json"
+            response = urllib.request.urlopen(config_url, timeout=30)
+            config = json.loads(response.read())
+            _dl_template_cache[index_url] = config["dl"]
+        dl_template = _dl_template_cache[index_url]
 
         if "{crate}" in dl_template or "{version}" in dl_template:
             return dl_template.replace("{crate}", crate_name).replace("{version}", version)

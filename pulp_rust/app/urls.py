@@ -5,6 +5,7 @@ from pulp_rust.app.views import (
     IndexRoot,
     CargoIndexApiViewSet,
     CargoDownloadApiView,
+    CargoMeApiView,
     CargoPublishApiView,
 )
 
@@ -15,6 +16,11 @@ else:
 
 
 urlpatterns = [
+    path(
+        CRATES_IO_URL + "me",
+        CargoMeApiView.as_view(),
+        name="cargo-me-api",
+    ),
     path(
         CRATES_IO_URL + "api/v1/crates/new",
         CargoPublishApiView.as_view(),

@@ -4,10 +4,6 @@ This guide walks you through setting up Pulp as a private Cargo registry for hos
 crates. This is useful for organizations that need to distribute proprietary or internal-only
 Rust packages.
 
-!!! note
-    Package publishing support (`cargo publish`) is not yet available but is planned for an
-    upcoming release. In the meantime, content can be uploaded through the Pulp REST API.
-
 ## Create a Repository
 
 ```bash
@@ -16,13 +12,15 @@ pulp rust repository create --name my-crates
 
 ## Create a Distribution
 
-A distribution makes the repository's content available to Cargo over HTTP.
+A distribution makes the repository's content available to Cargo over HTTP. Set `--allow-uploads`
+to enable publishing crates via `cargo publish`.
 
 ```bash
 pulp rust distribution create \
     --name my-crates \
     --base-path my-crates \
-    --repository my-crates
+    --repository my-crates \
+    --allow-uploads
 ```
 
 Your private registry is now served at `http://<pulp-host>/pulp/cargo/my-crates/`.
@@ -34,6 +32,58 @@ Add the private registry to your Cargo configuration. Create or edit `~/.cargo/c
 ```toml
 [registries.my-crates]
 index = "sparse+http://<pulp-host>/pulp/cargo/my-crates/"
+```
+
+## Authentication
+
+State-changing operations (publishing, yanking, and unyanking) require an authorization token.
+Configure the token for your registry in `~/.cargo/credentials.toml`:
+
+```toml
+[registries.my-crates]
+token = "i_understand_that_pulp_rust_does_not_support_proper_auth_yet"
+```
+
+Alternatively, you can pass the token on the command line:
+
+```bash
+cargo publish --registry my-crates --token "i_understand_that_pulp_rust_does_not_support_proper_auth_yet"
+```
+
+!!! warning
+    This is a temporary stub token. Proper token-based authentication is planned for a future
+    release. The stub token exists to ensure that the authentication workflow is exercised and that
+    state-changing operations are not completely open.
+
+Read-only operations (downloading crates, browsing the index) do not require a token.
+
+## Publish a Crate
+
+Once the registry is configured and a distribution with `--allow-uploads` exists, you can publish
+crates using standard Cargo tooling:
+
+```bash
+cargo publish --registry my-crates
+```
+
+This uploads the crate to Pulp, which creates the artifact, content metadata, and a new repository
+version. The crate is immediately available for download through the distribution.
+
+Publishing the same crate version twice is rejected — crate versions are immutable, consistent
+with crates.io behavior.
+
+## Yank and Unyank
+
+Yanking marks a crate version as unavailable for new dependency resolution, while still allowing
+existing projects that already depend on it to continue downloading it. This matches the
+[crates.io yank semantics](https://doc.rust-lang.org/cargo/reference/publishing.html#cargo-yank).
+
+```bash
+# Yank a version
+cargo yank --registry my-crates --version 1.0.0 my-crate
+
+# Unyank a version
+cargo yank --registry my-crates --version 1.0.0 --undo my-crate
 ```
 
 ### Using the Private Registry as a Dependency Source
