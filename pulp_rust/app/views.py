@@ -166,18 +166,9 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         # Extract crate name from the path (last component)
         crate_name = path.rsplit("/", 1)[-1].lower()
 
-        # Try to serve from local content first
-        if content is not None:
-            crate_versions = content.filter(name=crate_name).order_by("vers")
-            if crate_versions.exists():
-                yanked_versions = set(
-                    RustPackageYank.objects.filter(
-                        pk__in=repo_ver.content, name=crate_name
-                    ).values_list("vers", flat=True)
-                )
-                return self._build_index_response(crate_versions, yanked_versions)
-
-        # Fall back to proxying from the upstream remote
+        # For pull-through caches (distributions with a remote), always proxy
+        # the index from upstream so that newly published upstream versions are
+        # discovered.  The actual .crate files are fetched on-demand.
         if self.distribution.remote:
             remote = self.distribution.remote.cast()
             index_url = _strip_sparse_prefix(remote.url).rstrip("/")
@@ -189,6 +180,17 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
                 if e.code == 404:
                     return HttpResponseNotFound(f"Crate '{crate_name}' not found")
                 raise
+
+        # For private registries (no remote), serve from local content only
+        if content is not None:
+            crate_versions = content.filter(name=crate_name).order_by("vers")
+            if crate_versions.exists():
+                yanked_versions = set(
+                    RustPackageYank.objects.filter(
+                        pk__in=repo_ver.content, name=crate_name
+                    ).values_list("vers", flat=True)
+                )
+                return self._build_index_response(crate_versions, yanked_versions)
 
         return HttpResponseNotFound(f"Crate '{crate_name}' not found")
 
