@@ -25,6 +25,12 @@ fi
 
 COMPONENT_VERSION="$(bump-my-version show current_version | tail -n -1 | python -c 'from packaging.version import Version; print(Version(input()))')"
 COMPONENT_SOURCE="./pulp_rust/dist/pulp_rust-${COMPONENT_VERSION}-py3-none-any.whl"
+if [ "$TEST" = "s3" ]; then
+  COMPONENT_SOURCE="${COMPONENT_SOURCE} pulpcore[s3] git+https://github.com/gerrod3/botocore.git@fix-100-continue"
+fi
+if [ "$TEST" = "azure" ]; then
+  COMPONENT_SOURCE="${COMPONENT_SOURCE} pulpcore[azure,uvloop]"
+fi
 
 if [[ "$TEST" = "pulp" ]]; then
   python3 .ci/scripts/calc_constraints.py -u pyproject.toml > upperbounds_constraints.txt
