@@ -32,6 +32,12 @@ from pulp_rust.app.models import (
     _strip_sparse_prefix,
 )
 from pulp_rust.app.auth import require_cargo_token
+from pulp_rust.app.utils import (
+    validate_crate_name,
+    validate_crate_version,
+    canonicalize_crate_name,
+    strip_semver_build_metadata,
+)
 from pulp_rust.app.tasks import (
     ayank_package,
     aunyank_package,
@@ -164,11 +170,13 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         repo_ver, content = self.get_rvc()
 
         # Extract crate name from the path (last component)
-        crate_name = path.rsplit("/", 1)[-1].lower()
+        crate_name = path.rsplit("/", 1)[-1]
+        canonical = canonicalize_crate_name(crate_name)
 
-        # For pull-through caches (distributions with a remote), always proxy
-        # the index from upstream so that newly published upstream versions are
-        # discovered.  The actual .crate files are fetched on-demand.
+        # For pull-through caches (distributions with a remote), proxy the
+        # index from upstream so that newly published upstream versions are
+        # discovered.  If the upstream is unreachable, fall through to serve
+        # from locally cached content.
         if self.distribution.remote:
             remote = self.distribution.remote.cast()
             index_url = _strip_sparse_prefix(remote.url).rstrip("/")
@@ -179,15 +187,29 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
             except urllib.error.HTTPError as e:
                 if e.code == 404:
                     return HttpResponseNotFound(f"Crate '{crate_name}' not found")
-                raise
+                log.warning(
+                    "Upstream index request failed (HTTP %d) for %s, "
+                    "falling back to cached content",
+                    e.code,
+                    upstream_url,
+                )
+            except (urllib.error.URLError, TimeoutError) as e:
+                log.warning(
+                    "Upstream index request failed for %s: %s, " "falling back to cached content",
+                    upstream_url,
+                    e,
+                )
 
-        # For private registries (no remote), serve from local content only
+        # Serve from local index. For private registries this is the only source; for pull-through
+        # caches this is the fallback when upstream is unavailable.
+        # Use canonical_name for the lookup so that requests for any name form
+        # (e.g. cfg-if, cfg_if, Cfg-If) find the right content.
         if content is not None:
-            crate_versions = content.filter(name=crate_name).order_by("vers")
+            crate_versions = content.filter(canonical_name=canonical).order_by("vers")
             if crate_versions.exists():
                 yanked_versions = set(
                     RustPackageYank.objects.filter(
-                        pk__in=repo_ver.content, name=crate_name
+                        pk__in=repo_ver.content, name=canonical
                     ).values_list("vers", flat=True)
                 )
                 return self._build_index_response(crate_versions, yanked_versions)
@@ -338,9 +360,24 @@ class CargoPublishApiView(APIView):
         if not name or not vers:
             return self._error_response("missing required fields: name, vers")
 
-        # Check for duplicates before dispatching — crates.io rejects re-publishing
+        error = validate_crate_name(name)
+        if error:
+            return self._error_response(error)
+
+        error = validate_crate_version(vers)
+        if error:
+            return self._error_response(error)
+
+        # Check for duplicates using canonical name form to prevent confusable
+        # packages (e.g. "my-crate" vs "my_crate" or "MyCrate" vs "mycrate").
+        # Strip build metadata because SemVer 2.0.0 treats versions differing only
+        # in build metadata as identical (e.g. "1.0.0" and "1.0.0+build1" collide).
+        canonical = canonicalize_crate_name(name)
+        vers_base = strip_semver_build_metadata(vers)
         repo_version = distro.repository.latest_version()
-        if RustContent.objects.filter(pk__in=repo_version.content, name=name, vers=vers).exists():
+        if RustContent.objects.filter(
+            pk__in=repo_version.content, canonical_name=canonical, vers=vers_base
+        ).exists():
             return self._error_response(f"crate version `{name}@{vers}` is already uploaded")
 
         # Write the .crate bytes to a temp file — raw bytes can't be passed
@@ -437,9 +474,10 @@ class CargoDownloadApiView(APIView):
         if not distro.repository:
             raise Http404("No repository associated with this distribution")
 
+        canonical = canonicalize_crate_name(name)
         repo_version = distro.repository.latest_version()
         if not RustContent.objects.filter(
-            pk__in=repo_version.content, name=name, vers=version
+            pk__in=repo_version.content, canonical_name=canonical, vers=version
         ).exists():
             return HttpResponse(
                 json.dumps(
@@ -455,7 +493,7 @@ class CargoDownloadApiView(APIView):
             immediate=True,
             kwargs={
                 "repository_pk": str(distro.repository.pk),
-                "name": name,
+                "name": canonical,
                 "vers": version,
             },
         )
@@ -483,7 +521,7 @@ class CargoDownloadApiView(APIView):
             immediate=True,
             kwargs={
                 "repository_pk": str(distro.repository.pk),
-                "name": name,
+                "name": canonicalize_crate_name(name),
                 "vers": version,
             },
         )

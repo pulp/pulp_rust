@@ -19,6 +19,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('content_ptr', models.OneToOneField(auto_created=True, on_delete=django.db.models.deletion.CASCADE, parent_link=True, primary_key=True, serialize=False, to='core.content')),
                 ('name', models.CharField(db_index=True, max_length=255)),
+                ('canonical_name', models.CharField(db_index=True, max_length=255)),
                 ('vers', models.CharField(db_index=True, max_length=64)),
                 ('cksum', models.CharField(db_index=True, max_length=64)),
                 ('features', models.JSONField(blank=True, default=dict)),
@@ -30,7 +31,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'default_related_name': '%(app_label)s_%(model_name)s',
-                'unique_together': {('name', 'vers', '_pulp_domain')},
+                'unique_together': {('name', 'vers', 'cksum', '_pulp_domain')},
             },
             bases=('core.content',),
         ),
@@ -38,7 +39,7 @@ class Migration(migrations.Migration):
             name='RustDistribution',
             fields=[
                 ('distribution_ptr', models.OneToOneField(auto_created=True, on_delete=django.db.models.deletion.CASCADE, parent_link=True, primary_key=True, serialize=False, to='core.distribution')),
-                ('allow_uploads', models.BooleanField(default=True)),
+                ('allow_uploads', models.BooleanField(default=False)),
             ],
             options={
                 'default_related_name': '%(app_label)s_%(model_name)s',

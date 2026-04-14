@@ -5,7 +5,11 @@ from logging import getLogger
 from django.db import models
 from django_lifecycle import hook, AFTER_CREATE
 
-from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
+from pulp_rust.app.utils import (
+    canonicalize_crate_name,
+    extract_cargo_toml,
+    extract_dependencies,
+)
 
 from pulpcore.plugin.models import (
     Content,
@@ -55,8 +59,25 @@ class RustContent(Content):
     Cargo registry index specification. Each instance corresponds to one line
     in a package's index file.
 
+    The `name` field preserves the original crate name as it appears in the
+    package's `Cargo.toml` (e.g. `cfg-if`, `Serde-JSON`).  This matches
+    crates.io behavior and ensures that download paths and index entries use
+    the author's intended name form.
+
+    The `canonical_name` field stores the canonical form (lowercased, hyphens
+    replaced with underscores) for use in lookups where the Cargo spec's
+    case-insensitive, hyphen/underscore-equivalent matching is needed - for
+    example, duplicate detection during publish and yank operations.
+
+    Content uniqueness is enforced on `(name, vers, cksum, _pulp_domain)`.
+    Including `cksum` allows different crates with the same name and version
+    (e.g. a private crate and a public crate) to coexist as separate content
+    objects within a domain, while `repo_key_fields` prevents both from
+    appearing in the same repository version.
+
     Fields:
-        name: The package name (crate name)
+        name: The package name as it appears in Cargo.toml
+        canonical_name: Canonical form (lowercased, hyphens -> underscores)
         vers: The semantic version string (SemVer 2.0.0)
         cksum: SHA256 checksum of the .crate file (tarball)
         features: JSON object mapping feature names to their dependencies
@@ -69,8 +90,14 @@ class RustContent(Content):
     TYPE = "rust"
     repo_key_fields = ("name", "vers")
 
-    # Package name - alphanumeric characters, hyphens, and underscores allowed
+    # Package name as it appears in the crate's Cargo.toml.
     name = models.CharField(max_length=255, blank=False, null=False, db_index=True)
+
+    # Canonical form of the name: lowercased with hyphens replaced by underscores.
+    # Used for lookups where the Cargo spec's case-insensitive,
+    # hyphen/underscore-equivalent matching is needed (e.g. duplicate detection,
+    # yank operations).
+    canonical_name = models.CharField(max_length=255, blank=False, null=False, db_index=True)
 
     # Semantic version string following SemVer 2.0.0 specification
     vers = models.CharField(max_length=64, blank=False, null=False, db_index=True)
@@ -115,6 +142,7 @@ class RustContent(Content):
 
         content = RustContent(
             name=crate_name,
+            canonical_name=canonicalize_crate_name(crate_name),
             vers=version,
             cksum=artifact.sha256,
             features=cargo_toml.get("features", {}),
@@ -136,7 +164,7 @@ class RustContent(Content):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
-        unique_together = (("name", "vers", "_pulp_domain"),)
+        unique_together = (("name", "vers", "cksum", "_pulp_domain"),)
 
 
 class RustDependency(models.Model):
@@ -277,6 +305,7 @@ class RustPackageYank(Content):
 
     name = models.CharField(max_length=255, db_index=True)
     vers = models.CharField(max_length=64, db_index=True)
+
     _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
 
     class Meta:
@@ -308,7 +337,7 @@ class RustDistribution(Distribution):
 
     TYPE = "rust"
 
-    allow_uploads = models.BooleanField(default=True)
+    allow_uploads = models.BooleanField(default=False)
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
