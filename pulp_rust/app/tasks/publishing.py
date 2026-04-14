@@ -1,11 +1,18 @@
 import hashlib
 import struct
 
+from django.db import IntegrityError
+
 from pulpcore.plugin.models import Artifact, ContentArtifact
 from pulpcore.plugin.tasking import aadd_and_remove
 
 from pulp_rust.app.models import RustContent, RustDependency, RustRepository
-from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
+from pulp_rust.app.utils import (
+    canonicalize_crate_name,
+    extract_cargo_toml,
+    extract_dependencies,
+    strip_semver_build_metadata,
+)
 
 
 def parse_cargo_publish_body(body):
@@ -55,15 +62,19 @@ async def apublish_package(repository_pk, metadata, crate_path):
     """
     repository = await RustRepository.objects.aget(pk=repository_pk)
 
-    # Create the artifact from the .crate file
+    # Create the artifact from the .crate file, or reuse an existing one
+    # with the same checksum (Artifact has a unique constraint on digests).
     with open(crate_path, "rb") as f:
         cksum = hashlib.sha256(f.read()).hexdigest()
 
     artifact = Artifact.init_and_validate(crate_path, expected_digests={"sha256": cksum})
-    await artifact.asave()
+    try:
+        await artifact.asave()
+    except IntegrityError:
+        artifact = await Artifact.objects.aget(sha256=cksum)
 
     # Extract authoritative metadata from the Cargo.toml inside the .crate tarball.
-    # The publish JSON metadata is NOT authoritative — a rogue client can send metadata
+    # The publish JSON metadata is NOT authoritative - a rogue client can send metadata
     # that doesn't match the actual package. We only use the JSON name/vers to locate the
     # Cargo.toml within the tarball, then extract everything from the Cargo.toml itself.
     # See: https://github.com/rust-lang/cargo/issues/14492
@@ -72,34 +83,52 @@ async def apublish_package(repository_pk, metadata, crate_path):
     package = cargo_toml.get("package", {})
 
     name = package["name"]
-    vers = package["version"]
+    canonical_name = canonicalize_crate_name(name)
+    # Strip build metadata - SemVer 2.0.0 treats versions differing only in
+    # build metadata as identical, and the index must not contain duplicates.
+    vers = strip_semver_build_metadata(package["version"])
 
     # Build dependency list from the Cargo.toml (authoritative source)
     deps = extract_dependencies(cargo_toml)
 
-    # Create the content record
-    content = RustContent(
+    # Reuse existing content if it already exists in the domain with the same
+    # checksum (e.g. from a pull-through cache or another repository's publish).
+    # Content in Pulp is globally shared - the same object can belong to
+    # multiple repositories.  Including cksum in the lookup allows different
+    # crates with the same name+version (e.g. a private crate shadowing a
+    # public one) to coexist as separate content objects within a domain.
+    content = await RustContent.objects.filter(
         name=name,
         vers=vers,
         cksum=cksum,
-        features=cargo_toml.get("features", {}),
-        features2=None,
-        links=package.get("links"),
-        rust_version=package.get("rust-version"),
         _pulp_domain_id=repository.pulp_domain_id,
-    )
-    await content.asave()
+    ).afirst()
 
-    # Create dependencies
-    if deps:
-        await RustDependency.objects.abulk_create(
-            [RustDependency(content=content, **dep) for dep in deps]
+    if content is None:
+        content = RustContent(
+            name=name,
+            canonical_name=canonical_name,
+            vers=vers,
+            cksum=cksum,
+            features=cargo_toml.get("features", {}),
+            features2=None,
+            links=package.get("links"),
+            rust_version=package.get("rust-version"),
+            _pulp_domain_id=repository.pulp_domain_id,
         )
+        await content.asave()
 
-    # Create the content artifact (links the .crate file to the content)
+        if deps:
+            await RustDependency.objects.abulk_create(
+                [RustDependency(content=content, **dep) for dep in deps]
+            )
+
+    # Create the content artifact if it doesn't already exist
     relative_path = f"{name}/{name}-{vers}.crate"
-    await ContentArtifact.objects.acreate(
-        artifact=artifact, content=content, relative_path=relative_path
+    await ContentArtifact.objects.aget_or_create(
+        content=content,
+        relative_path=relative_path,
+        defaults={"artifact": artifact},
     )
 
     # Add the content to a new repository version

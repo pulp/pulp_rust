@@ -1,6 +1,7 @@
 from pulpcore.plugin.tasking import aadd_and_remove
 
 from pulp_rust.app.models import RustContent, RustPackageYank, RustRepository
+from pulp_rust.app.utils import canonicalize_crate_name
 
 
 async def ayank_package(repository_pk, name, vers):
@@ -9,11 +10,14 @@ async def ayank_package(repository_pk, name, vers):
 
     Creates a new repository version with the yank marker added.
     """
+    name = canonicalize_crate_name(name)
     repository = await RustRepository.objects.aget(pk=repository_pk)
     latest = await repository.alatest_version()
 
     # Verify the package version exists in this repository
-    exists = await RustContent.objects.filter(pk__in=latest.content, name=name, vers=vers).aexists()
+    exists = await RustContent.objects.filter(
+        pk__in=latest.content, canonical_name=name, vers=vers
+    ).aexists()
     if not exists:
         raise ValueError(f"Package {name}=={vers} not found in repository")
 
@@ -25,7 +29,9 @@ async def ayank_package(repository_pk, name, vers):
         return  # Already yanked, no-op
 
     yank_marker, _ = await RustPackageYank.objects.aget_or_create(
-        name=name, vers=vers, _pulp_domain_id=repository.pulp_domain_id
+        name=name,
+        vers=vers,
+        _pulp_domain_id=repository.pulp_domain_id,
     )
 
     await aadd_and_remove(
@@ -41,6 +47,7 @@ async def aunyank_package(repository_pk, name, vers):
 
     Creates a new repository version with the yank marker removed.
     """
+    name = canonicalize_crate_name(name)
     repository = await RustRepository.objects.aget(pk=repository_pk)
     latest = await repository.alatest_version()
 

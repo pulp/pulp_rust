@@ -1,3 +1,4 @@
+import re
 import tarfile
 
 try:
@@ -88,3 +89,65 @@ def extract_dependencies(cargo_toml):
             deps.append(parse_dep(name, spec, kind="build", target=target))
 
     return deps
+
+
+CRATE_NAME_MAX_LENGTH = 64
+CRATE_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(-[0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)?"
+    r"(\+[0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*)?$"
+)
+
+
+def validate_crate_name(name):
+    """Validate a crate name.
+
+    Enforces the following rules:
+    - Must start with an ASCII letter and contain only ASCII alphanumeric
+      characters, hyphens, or underscores (Cargo spec, via ``cargo new``).
+    - Must not exceed 64 characters (crates.io policy, not in the Cargo spec).
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    if not name:
+        return "crate name must not be empty"
+    if len(name) > CRATE_NAME_MAX_LENGTH:
+        return f"crate name exceeds maximum length of {CRATE_NAME_MAX_LENGTH} characters"
+    if not CRATE_NAME_RE.match(name):
+        return (
+            "crate name must start with an ASCII letter and contain only "
+            "ASCII alphanumeric characters, hyphens, or underscores"
+        )
+    return None
+
+
+def validate_crate_version(version):
+    """Validate a crate version per SemVer 2.0.0 (required by Cargo spec).
+
+    Returns None if valid, or an error message string if invalid.
+    """
+    if not version:
+        return "crate version must not be empty"
+    if not SEMVER_RE.match(version):
+        return f"invalid semver: `{version}` " "(expected MAJOR.MINOR.PATCH[-prerelease][+build])"
+    return None
+
+
+def strip_semver_build_metadata(version):
+    """Strip build metadata from a SemVer version string.
+
+    Per SemVer 2.0.0, versions that differ only in build metadata have equal
+    precedence.  The Cargo registry spec requires that indexes treat such
+    versions as identical (e.g. ``1.0.0`` and ``1.0.0+build1`` must collide).
+    """
+    return version.split("+", 1)[0]
+
+
+def canonicalize_crate_name(name):
+    """Canonicalize a crate name for uniqueness comparison.
+
+    Crate names are case-insensitive and hyphens and underscores are treated
+    as equivalent (Cargo spec).
+    """
+    return name.lower().replace("-", "_")

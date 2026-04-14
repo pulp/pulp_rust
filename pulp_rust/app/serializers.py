@@ -7,6 +7,7 @@ from pulpcore.plugin import models as core_models
 from pulpcore.plugin import serializers as core_serializers
 
 from . import models
+from .utils import canonicalize_crate_name
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +154,7 @@ class RustContentSerializer(core_serializers.SingleArtifactContentSerializer):
     def create(self, validated_data):
         """Create RustContent and related dependencies."""
         dependencies_data = validated_data.pop("dependencies", [])
+        validated_data["canonical_name"] = canonicalize_crate_name(validated_data["name"])
         content = super().create(validated_data)
 
         # Create dependency records
@@ -243,7 +245,7 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
     """
 
     allow_uploads = serializers.BooleanField(
-        default=True, help_text=_("Allow packages to be uploaded to this index.")
+        default=False, help_text=_("Allow packages to be uploaded to this index.")
     )
     remote = core_serializers.DetailRelatedField(
         required=False,
@@ -252,6 +254,21 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
         queryset=core_models.Remote.objects.all(),
         allow_null=True,
     )
+
+    def validate(self, data):
+        data = super().validate(data)
+        remote = data.get("remote", self.instance.remote if self.instance else None)
+        allow_uploads = data.get(
+            "allow_uploads", self.instance.allow_uploads if self.instance else False
+        )
+        if remote and allow_uploads:
+            raise serializers.ValidationError(
+                _(
+                    "A distribution cannot have both a remote and allow_uploads enabled. "
+                    "Use separate distributions for pull-through caching and publishing."
+                )
+            )
+        return data
 
     class Meta:
         fields = core_serializers.DistributionSerializer.Meta.fields + ("allow_uploads", "remote")

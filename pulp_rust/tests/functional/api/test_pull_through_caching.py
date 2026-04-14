@@ -335,3 +335,37 @@ def test_index_fidelity_on_demand_cached(
     # Now the index is served from local data — compare against upstream
     pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
     assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)
+
+
+def test_pull_through_index_falls_back_to_cache_when_upstream_unavailable(
+    delete_orphans_pre,
+    rust_remote_factory,
+    rust_remote_api_client,
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    monitor_task,
+):
+    """on_demand: if the upstream is unreachable, the index should fall back to cached content."""
+    remote = rust_remote_factory(url=CRATES_IO_URL, policy="on_demand")
+    repository = rust_repo_factory(remote=remote.pulp_href)
+    distribution = rust_distribution_factory(
+        remote=remote.pulp_href, repository=repository.pulp_href
+    )
+
+    base = cargo_registry_url(distribution.base_path)
+
+    # Cache itoa via pull-through
+    download_file(urljoin(base, "api/v1/crates/itoa/1.0.0/download"))
+
+    # Point the remote at an unreachable URL
+    monitor_task(
+        rust_remote_api_client.partial_update(
+            remote.pulp_href, {"url": "sparse+https://localhost:1/"}
+        ).task
+    )
+
+    # The index should fall back to locally cached content
+    entry = get_index_entry(base, "it/oa/itoa", "1.0.0")
+    assert entry["name"] == "itoa"
+    assert entry["vers"] == "1.0.0"

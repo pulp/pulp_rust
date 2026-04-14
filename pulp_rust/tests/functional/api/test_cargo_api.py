@@ -1,10 +1,12 @@
 """Functional tests for the Cargo registry API endpoints."""
 
 import json
+import uuid
 from urllib.parse import urljoin
 
 import pytest
 from aiohttp.client_exceptions import ClientResponseError
+from pulpcore.client.pulp_rust.exceptions import ApiException
 
 from pulp_rust.tests.functional.utils import CRATES_IO_URL, download_file
 
@@ -252,3 +254,43 @@ def test_add_cached_content_empty_repo(
 
     repository = rust_repo_api_client.read(repository.pulp_href)
     assert repository.latest_version_href is not None
+
+
+def test_distribution_rejects_remote_with_uploads(
+    rust_remote_factory,
+    rust_repo_factory,
+    rust_distro_api_client,
+):
+    """Creating a distribution with both a remote and allow_uploads should fail."""
+    remote = rust_remote_factory(url=CRATES_IO_URL)
+    repo = rust_repo_factory()
+
+    with pytest.raises(ApiException) as exc:
+        rust_distro_api_client.create(
+            {
+                "name": str(uuid.uuid4()),
+                "base_path": str(uuid.uuid4()),
+                "repository": repo.pulp_href,
+                "remote": remote.pulp_href,
+                "allow_uploads": True,
+            }
+        )
+    assert exc.value.status == 400
+
+
+def test_distribution_update_rejects_remote_with_uploads(
+    rust_repo_factory,
+    rust_distribution_factory,
+    rust_remote_factory,
+    rust_distro_api_client,
+):
+    """Updating a distribution to set both remote and allow_uploads should fail."""
+    repo = rust_repo_factory()
+    distro = rust_distribution_factory(repository=repo.pulp_href)
+    remote = rust_remote_factory(url=CRATES_IO_URL)
+
+    with pytest.raises(ApiException) as exc:
+        rust_distro_api_client.partial_update(
+            distro.pulp_href, {"remote": remote.pulp_href, "allow_uploads": True}
+        )
+    assert exc.value.status == 400

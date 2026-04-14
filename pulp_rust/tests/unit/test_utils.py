@@ -9,7 +9,15 @@ import pytest
 
 django.setup()
 
-from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies, parse_dep  # noqa: E402
+from pulp_rust.app.utils import (  # noqa: E402
+    extract_cargo_toml,
+    extract_dependencies,
+    parse_dep,
+    validate_crate_name,
+    validate_crate_version,
+    canonicalize_crate_name,
+    strip_semver_build_metadata,
+)
 
 
 def _make_crate_tarball(crate_name, version, cargo_toml_bytes):
@@ -246,3 +254,126 @@ class TestExtractCargoToml:
         path = _make_crate_tarball("zlib-sys", "0.1.0", toml_content)
         result = extract_cargo_toml(path, "zlib-sys", "0.1.0")
         assert result["package"]["links"] == "z"
+
+
+class TestValidateCrateName:
+    def test_valid_simple(self):
+        assert validate_crate_name("serde") is None
+
+    def test_valid_with_hyphen(self):
+        assert validate_crate_name("serde-json") is None
+
+    def test_valid_with_underscore(self):
+        assert validate_crate_name("serde_json") is None
+
+    def test_valid_single_char(self):
+        assert validate_crate_name("a") is None
+
+    def test_valid_max_length(self):
+        assert validate_crate_name("a" * 64) is None
+
+    def test_valid_mixed_case(self):
+        assert validate_crate_name("MyLib") is None
+
+    def test_invalid_empty(self):
+        assert validate_crate_name("") is not None
+
+    def test_invalid_starts_with_digit(self):
+        assert validate_crate_name("123abc") is not None
+
+    def test_invalid_starts_with_hyphen(self):
+        assert validate_crate_name("-foo") is not None
+
+    def test_invalid_starts_with_underscore(self):
+        assert validate_crate_name("_foo") is not None
+
+    def test_invalid_special_chars(self):
+        assert validate_crate_name("foo@bar") is not None
+
+    def test_invalid_spaces(self):
+        assert validate_crate_name("foo bar") is not None
+
+    def test_invalid_too_long(self):
+        assert validate_crate_name("a" * 65) is not None
+
+    def test_invalid_dot(self):
+        assert validate_crate_name("foo.bar") is not None
+
+
+class TestValidateCrateVersion:
+    def test_valid_basic(self):
+        assert validate_crate_version("1.0.0") is None
+
+    def test_valid_zeros(self):
+        assert validate_crate_version("0.0.0") is None
+
+    def test_valid_large_numbers(self):
+        assert validate_crate_version("100.200.300") is None
+
+    def test_valid_prerelease(self):
+        assert validate_crate_version("1.0.0-alpha.1") is None
+
+    def test_valid_prerelease_with_hyphen(self):
+        assert validate_crate_version("1.0.0-beta-2") is None
+
+    def test_valid_build_metadata(self):
+        assert validate_crate_version("1.0.0+build.123") is None
+
+    def test_valid_prerelease_and_build(self):
+        assert validate_crate_version("1.0.0-alpha+build") is None
+
+    def test_invalid_empty(self):
+        assert validate_crate_version("") is not None
+
+    def test_invalid_not_semver(self):
+        assert validate_crate_version("abc") is not None
+
+    def test_invalid_two_parts(self):
+        assert validate_crate_version("1.0") is not None
+
+    def test_invalid_four_parts(self):
+        assert validate_crate_version("1.0.0.0") is not None
+
+    def test_invalid_leading_v(self):
+        assert validate_crate_version("v1.0.0") is not None
+
+    def test_invalid_leading_zero(self):
+        assert validate_crate_version("01.0.0") is not None
+
+
+class TestCanonicalizeCrateName:
+    def test_lowercase(self):
+        assert canonicalize_crate_name("Serde") == "serde"
+
+    def test_hyphen_to_underscore(self):
+        assert canonicalize_crate_name("serde-json") == "serde_json"
+
+    def test_already_canonical(self):
+        assert canonicalize_crate_name("serde_json") == "serde_json"
+
+    def test_mixed(self):
+        assert canonicalize_crate_name("My-Cool_Crate") == "my_cool_crate"
+
+    def test_all_uppercase(self):
+        assert canonicalize_crate_name("SERDE") == "serde"
+
+
+class TestStripSemverBuildMetadata:
+    def test_no_metadata(self):
+        assert strip_semver_build_metadata("1.0.0") == "1.0.0"
+
+    def test_simple_metadata(self):
+        assert strip_semver_build_metadata("1.0.0+build1") == "1.0.0"
+
+    def test_complex_metadata(self):
+        assert strip_semver_build_metadata("1.0.0+build.123.abc") == "1.0.0"
+
+    def test_prerelease_no_metadata(self):
+        assert strip_semver_build_metadata("1.0.0-alpha.1") == "1.0.0-alpha.1"
+
+    def test_prerelease_with_metadata(self):
+        assert strip_semver_build_metadata("1.0.0-alpha+build") == "1.0.0-alpha"
+
+    def test_metadata_with_plus_in_metadata(self):
+        # Only the first '+' is the delimiter
+        assert strip_semver_build_metadata("1.0.0+a+b") == "1.0.0"

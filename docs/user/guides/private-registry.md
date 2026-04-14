@@ -131,10 +131,16 @@ private registry. Any crate not present in the registry will fail to resolve.
 
 ## Combining with Pull-Through Caching
 
-If you need both private crates and public crates.io dependencies, we recommend keeping them as
-**separate registries** rather than mixing them into one. This avoids
-[dependency confusion](https://medium.com/@alex.birsan/dependency-confusion-4a5d60fec610) attacks,
-where a malicious package on a public registry could impersonate a private dependency.
+If you need both private crates and public crates.io dependencies, use separate distributions and
+separate repositories -- one for publishing and one for pull-through caching. Pulp enforces that
+a distribution cannot have both `allow_uploads` and a `remote` set at the same time.
+
+!!! warning
+    The two distributions should also use **separate repositories**. Mixing public and private
+    content in a single repository creates a risk of
+    [dependency confusion](https://medium.com/@alex.birsan/dependency-confusion-4a5d60fec610)
+    attacks, where a crate from the public registry conflicts with a private crate of the same
+    name and version.
 
 ```bash
 # Set up a separate pull-through cache for crates.io
@@ -167,11 +173,18 @@ serde = "1.0"                                              # resolved from crate
 my-internal-lib = { version = "1.0", registry = "my-crates" }  # resolved from private registry
 ```
 
-!!! warning
-    Avoid adding a public remote (such as crates.io) to a private registry's distribution. Mixing
-    public and private packages in a single registry index creates a risk of dependency confusion
-    attacks, where an attacker publishes a crate on the public registry with the same name as one
-    of your private crates.
+## Crate Name Handling
+
+Crate names in the Cargo spec are case-insensitive, and hyphens and underscores are treated as
+equivalent (e.g. `my-crate` and `my_crate` refer to the same package). Pulp enforces this:
+publishing `my-crate` when `my_crate` already exists in the same repository is rejected as a
+duplicate. Yank and unyank operations use the same matching.
+
+!!! tip "Separate Registries"
+    Keep private registries and public pull-through caches as separate distributions (and
+    preferably separate repositories). This makes it easy to audit which registries have
+    upstream access and reduces the risk of accidental misconfiguration. For additional
+    isolation or access control, they could be kept on entirely separate domains.
 
 ## Further Reading
 
