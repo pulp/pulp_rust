@@ -79,7 +79,8 @@ async def apublish_package(repository_pk, metadata, crate_path):
     # Cargo.toml within the tarball, then extract everything from the Cargo.toml itself.
     # See: https://github.com/rust-lang/cargo/issues/14492
     #      https://github.com/rust-lang/crates.io/pull/7238
-    cargo_toml = extract_cargo_toml(artifact.file.path, metadata["name"], metadata["vers"])
+    with artifact.file.open("rb") as f:
+        cargo_toml = extract_cargo_toml(f, metadata["name"], metadata["vers"])
     package = cargo_toml.get("package", {})
 
     name = package["name"]

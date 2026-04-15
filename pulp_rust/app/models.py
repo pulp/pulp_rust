@@ -138,7 +138,8 @@ class RustContent(Content):
         Cargo.toml inside the .crate tarball.
         """
         crate_name, version = _parse_crate_relative_path(relative_path)
-        cargo_toml = extract_cargo_toml(artifact.file.path, crate_name, version)
+        with artifact.file.open("rb") as f:
+            cargo_toml = extract_cargo_toml(f, crate_name, version)
 
         content = RustContent(
             name=crate_name,
