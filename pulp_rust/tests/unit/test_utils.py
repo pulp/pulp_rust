@@ -207,7 +207,8 @@ class TestExtractCargoToml:
     def test_basic_extraction(self):
         toml_content = b'[package]\nname = "foo"\nversion = "1.0.0"\n'
         path = _make_crate_tarball("foo", "1.0.0", toml_content)
-        result = extract_cargo_toml(path, "foo", "1.0.0")
+        with open(path, "rb") as f:
+            result = extract_cargo_toml(f, "foo", "1.0.0")
         assert result["package"]["name"] == "foo"
         assert result["package"]["version"] == "1.0.0"
 
@@ -216,7 +217,8 @@ class TestExtractCargoToml:
             b'[package]\nname = "bar"\nversion = "0.1.0"\n' b'\n[dependencies]\nserde = "1.0"\n'
         )
         path = _make_crate_tarball("bar", "0.1.0", toml_content)
-        result = extract_cargo_toml(path, "bar", "0.1.0")
+        with open(path, "rb") as f:
+            result = extract_cargo_toml(f, "bar", "0.1.0")
         assert "serde" in result["dependencies"]
 
     def test_with_features(self):
@@ -225,7 +227,8 @@ class TestExtractCargoToml:
             b'\n[features]\ndefault = ["std"]\nstd = []\n'
         )
         path = _make_crate_tarball("baz", "2.0.0", toml_content)
-        result = extract_cargo_toml(path, "baz", "2.0.0")
+        with open(path, "rb") as f:
+            result = extract_cargo_toml(f, "baz", "2.0.0")
         assert result["features"] == {"default": ["std"], "std": []}
 
     def test_missing_cargo_toml_raises(self):
@@ -241,18 +244,21 @@ class TestExtractCargoToml:
         tmp.flush()
 
         with pytest.raises(KeyError):
-            extract_cargo_toml(tmp.name, "foo", "1.0.0")
+            with open(tmp.name, "rb") as f:
+                extract_cargo_toml(f, "foo", "1.0.0")
 
     def test_with_rust_version(self):
         toml_content = b'[package]\nname = "qux"\nversion = "1.0.0"\nrust-version = "1.56.0"\n'
         path = _make_crate_tarball("qux", "1.0.0", toml_content)
-        result = extract_cargo_toml(path, "qux", "1.0.0")
+        with open(path, "rb") as f:
+            result = extract_cargo_toml(f, "qux", "1.0.0")
         assert result["package"]["rust-version"] == "1.56.0"
 
     def test_with_links(self):
         toml_content = b'[package]\nname = "zlib-sys"\nversion = "0.1.0"\nlinks = "z"\n'
         path = _make_crate_tarball("zlib-sys", "0.1.0", toml_content)
-        result = extract_cargo_toml(path, "zlib-sys", "0.1.0")
+        with open(path, "rb") as f:
+            result = extract_cargo_toml(f, "zlib-sys", "0.1.0")
         assert result["package"]["links"] == "z"
 
 

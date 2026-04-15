@@ -7,13 +7,19 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 
-def extract_cargo_toml(crate_path, crate_name, version):
-    """Extract and parse Cargo.toml from a .crate tarball."""
+def extract_cargo_toml(fileobj, crate_name, version):
+    """Extract and parse Cargo.toml from a .crate tarball.
+
+    Args:
+        fileobj: A file-like object containing the .crate tarball data.
+        crate_name: The crate name (used to locate Cargo.toml inside the tarball).
+        version: The crate version (used to locate Cargo.toml inside the tarball).
+    """
     expected_path = f"{crate_name}-{version}/Cargo.toml"
-    with tarfile.open(crate_path, "r:gz") as tar:
+    with tarfile.open(fileobj=fileobj, mode="r:gz") as tar:
         cargo_toml_file = tar.extractfile(expected_path)
         if cargo_toml_file is None:
-            raise FileNotFoundError(f"No Cargo.toml found in {crate_path} at {expected_path}")
+            raise FileNotFoundError(f"No Cargo.toml found at {expected_path}")
         return tomllib.load(cargo_toml_file)
 
 

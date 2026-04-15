@@ -29,7 +29,8 @@ def test_upload_and_index_fidelity(
     crate_path, cksum = download_crate_from_upstream(crate_name, crate_version)
 
     # 2. Parse metadata from the .crate file
-    cargo_toml = extract_cargo_toml(crate_path, crate_name, crate_version)
+    with open(crate_path, "rb") as f:
+        cargo_toml = extract_cargo_toml(f, crate_name, crate_version)
     deps = extract_dependencies(cargo_toml)
     features = cargo_toml.get("features", {})
     links = cargo_toml.get("package", {}).get("links")

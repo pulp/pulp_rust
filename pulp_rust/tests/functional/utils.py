@@ -129,7 +129,8 @@ def build_publish_metadata(crate_path, crate_name, crate_version):
     Cargo uses "version_req" (not "req") and "explicit_name_in_toml" (not "package")
     per the Cargo registry web API spec.
     """
-    cargo_toml = extract_cargo_toml(crate_path, crate_name, crate_version)
+    with open(crate_path, "rb") as f:
+        cargo_toml = extract_cargo_toml(f, crate_name, crate_version)
     deps = extract_dependencies(cargo_toml)
 
     return {
