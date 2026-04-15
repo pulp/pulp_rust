@@ -6,6 +6,6 @@ class PulpRustPluginAppConfig(PulpPluginAppConfig):
 
     name = "pulp_rust.app"
     label = "rust"
-    version = "0.0.0.dev"
+    version = "0.1.0.dev"
     python_package_name = "pulp_rust"
     domain_compatible = True
