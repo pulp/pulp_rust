@@ -37,78 +37,12 @@ jobs:
 
       - name: "Publish package to PyPI"
         uses: pypa/gh-action-pypi-publish@release/v1
-  publish-python-bindings:
-    runs-on: "ubuntu-latest"
-    needs:
-      - "build"
-    environment:
-      name: "pypi"
-    permissions:
-      id-token: "write"
-
-    steps:
-      - uses: "actions/checkout@v6"
-        with:
-          fetch-depth: 1
-          path: "pulp_rust"
-
-      - name: "Download Python client"
-        uses: "actions/download-artifact@v8"
-        with:
-          name: "python-client.tar"
-          path: "pulp_rust/"
-
-      - name: "Untar python client packages"
-        run: |
-          tar -xvf rust-python-client.tar
-
-      - name: "Publish client to pypi"
-        uses: "pypa/gh-action-pypi-publish@release/v1"
-        with:
-          packages-dir: "pulp_rust/dist/"
-  publish-ruby-bindings:
-    runs-on: "ubuntu-latest"
-    needs:
-      - "build"
-    environment:
-      name: "rubygems"
-    permissions:
-      id-token: "write"
-
-    steps:
-      - uses: "actions/checkout@v6"
-        with:
-          fetch-depth: 1
-          path: "pulp_rust"
-
-      - name: "Download Ruby client"
-        uses: "actions/download-artifact@v8"
-        with:
-          name: "ruby-client.tar"
-          path: "pulp_rust/"
-
-      - name: "Untar Ruby client packages"
-        run: |
-          tar -xvf rust-ruby-client.tar
-
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "2.6"
-
-      - name: "Set RubyGems Credentials"
-        uses: "rubygems/configure-rubygems-credentials@v1.0.0"
-
-      - name: "Publish client to RubyGems"
-        run: |
-          gem push "pulp_rust_client-${{ github.ref_name }}.gem"
 
   create-gh-release:
     runs-on: "ubuntu-latest"
     needs:
       - "build"
       - "publish-package"
-      - "publish-python-bindings"
-      - "publish-ruby-bindings"
 
     permissions:
       contents: "write"
