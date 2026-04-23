@@ -2,11 +2,11 @@ from django.conf import settings
 from django.urls import path
 
 from pulp_rust.app.views import (
-    IndexRoot,
-    CargoIndexApiViewSet,
     CargoDownloadApiView,
+    CargoIndexApiViewSet,
     CargoMeApiView,
     CargoPublishApiView,
+    IndexRoot,
 )
 
 if settings.DOMAIN_ENABLED:

@@ -5,9 +5,9 @@ import django
 django.setup()
 
 from pulp_rust.app.models import (  # noqa: E402
-    _strip_sparse_prefix,
-    _parse_crate_relative_path,
     RustRemote,
+    _parse_crate_relative_path,
+    _strip_sparse_prefix,
 )
 
 

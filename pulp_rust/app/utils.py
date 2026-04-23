@@ -136,7 +136,7 @@ def validate_crate_version(version):
     if not version:
         return "crate version must not be empty"
     if not SEMVER_RE.match(version):
-        return f"invalid semver: `{version}` " "(expected MAJOR.MINOR.PATCH[-prerelease][+build])"
+        return f"invalid semver: `{version}` (expected MAJOR.MINOR.PATCH[-prerelease][+build])"
     return None
 
 

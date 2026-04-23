@@ -3,21 +3,21 @@ import urllib.request
 from logging import getLogger
 
 from django.db import models
-from django_lifecycle import hook, AFTER_CREATE
+from django_lifecycle import AFTER_CREATE, hook
+
+from pulpcore.plugin.models import (
+    Content,
+    Distribution,
+    Remote,
+    Repository,
+)
+from pulpcore.plugin.util import get_domain_pk
 
 from pulp_rust.app.utils import (
     canonicalize_crate_name,
     extract_cargo_toml,
     extract_dependencies,
 )
-
-from pulpcore.plugin.models import (
-    Content,
-    Remote,
-    Repository,
-    Distribution,
-)
-from pulpcore.plugin.util import get_domain_pk
 
 logger = getLogger(__name__)
 

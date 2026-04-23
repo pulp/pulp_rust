@@ -1,6 +1,6 @@
 import logging
-
 from gettext import gettext as _
+
 from rest_framework import serializers
 
 from pulpcore.plugin import models as core_models

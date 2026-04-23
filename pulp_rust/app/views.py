@@ -3,50 +3,49 @@ import logging
 import os
 import struct
 import tempfile
-import urllib.request
 import urllib.error
+import urllib.request
+from urllib.parse import urljoin
 
+from django.core.exceptions import ObjectDoesNotExist
+from django.http.response import (
+    Http404,
+    HttpResponse,
+    HttpResponseNotFound,
+)
+from django.shortcuts import get_object_or_404, redirect
+from drf_spectacular.utils import extend_schema
+from dynaconf import settings
+from rest_framework.exceptions import Throttled
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
-from rest_framework.exceptions import Throttled
-from django.core.exceptions import ObjectDoesNotExist
-from django.shortcuts import redirect, get_object_or_404
 
-from django.http.response import (
-    Http404,
-    HttpResponseNotFound,
-    HttpResponse,
-)
-from drf_spectacular.utils import extend_schema
-from dynaconf import settings
-from urllib.parse import urljoin
-
-from pulpcore.plugin.util import get_domain
 from pulpcore.plugin.tasking import dispatch
+from pulpcore.plugin.util import get_domain
 
+from pulp_rust.app.auth import require_cargo_token
 from pulp_rust.app.models import (
-    RustDistribution,
     RustContent,
+    RustDistribution,
     RustPackageYank,
     _strip_sparse_prefix,
-)
-from pulp_rust.app.auth import require_cargo_token
-from pulp_rust.app.utils import (
-    validate_crate_name,
-    validate_crate_version,
-    canonicalize_crate_name,
-    strip_semver_build_metadata,
-)
-from pulp_rust.app.tasks import (
-    ayank_package,
-    aunyank_package,
-    apublish_package,
-    parse_cargo_publish_body,
 )
 from pulp_rust.app.serializers import (
     IndexRootSerializer,
     RustContentSerializer,
+)
+from pulp_rust.app.tasks import (
+    apublish_package,
+    aunyank_package,
+    ayank_package,
+    parse_cargo_publish_body,
+)
+from pulp_rust.app.utils import (
+    canonicalize_crate_name,
+    strip_semver_build_metadata,
+    validate_crate_name,
+    validate_crate_version,
 )
 
 log = logging.getLogger(__name__)
@@ -195,7 +194,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
                 )
             except (urllib.error.URLError, TimeoutError) as e:
                 log.warning(
-                    "Upstream index request failed for %s: %s, " "falling back to cached content",
+                    "Upstream index request failed for %s: %s, falling back to cached content",
                     upstream_url,
                     e,
                 )
