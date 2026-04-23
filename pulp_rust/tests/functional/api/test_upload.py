@@ -1,13 +1,13 @@
 """Tests for uploading crate content via the Pulp REST API and verifying index fidelity."""
 
-from pulpcore.client.pulp_rust import RustRustContent, RustDependency
+from pulpcore.client.pulp_rust import RustDependency, RustRustContent
 
+from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
 from pulp_rust.tests.functional.utils import (
     assert_index_entry_matches_upstream,
     download_crate_from_upstream,
     get_index_entry,
 )
-from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
 
 
 def test_upload_and_index_fidelity(
