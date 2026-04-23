@@ -402,6 +402,6 @@ def test_cargo_publish_cross_repo_reuses_pull_through_content(
     )
     assert pub_content.count == 1, "Content not found in private registry"
 
-    assert (
-        pt_content.results[0].pulp_href == pub_content.results[0].pulp_href
-    ), "Pull-through and publish created separate content objects — expected reuse"
+    assert pt_content.results[0].pulp_href == pub_content.results[0].pulp_href, (
+        "Pull-through and publish created separate content objects — expected reuse"
+    )

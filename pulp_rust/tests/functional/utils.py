@@ -1,12 +1,12 @@
+import asyncio
 import hashlib
 import json
 import struct
 import tempfile
+from dataclasses import dataclass
 
 import aiohttp
-import asyncio
 import requests
-from dataclasses import dataclass
 
 from pulp_rust.app.auth import STUB_TOKEN
 from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
@@ -220,9 +220,9 @@ def assert_index_entry_matches_upstream(pulp_entry, upstream_entry):
 
             pulp_deps = sorted(pulp_entry["deps"], key=sort_key)
             upstream_deps = sorted(upstream_entry["deps"], key=sort_key)
-            assert (
-                pulp_deps == upstream_deps
-            ), f"deps mismatch:\n  pulp={pulp_deps}\n  upstream={upstream_deps}"
+            assert pulp_deps == upstream_deps, (
+                f"deps mismatch:\n  pulp={pulp_deps}\n  upstream={upstream_deps}"
+            )
         else:
             assert pulp_entry.get(field) == upstream_entry.get(field), (
                 f"{field} mismatch: pulp={pulp_entry.get(field)!r} "
