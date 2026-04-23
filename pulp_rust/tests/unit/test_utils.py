@@ -10,13 +10,13 @@ import pytest
 django.setup()
 
 from pulp_rust.app.utils import (  # noqa: E402
+    canonicalize_crate_name,
     extract_cargo_toml,
     extract_dependencies,
     parse_dep,
+    strip_semver_build_metadata,
     validate_crate_name,
     validate_crate_version,
-    canonicalize_crate_name,
-    strip_semver_build_metadata,
 )
 
 
@@ -214,7 +214,7 @@ class TestExtractCargoToml:
 
     def test_with_dependencies(self):
         toml_content = (
-            b'[package]\nname = "bar"\nversion = "0.1.0"\n' b'\n[dependencies]\nserde = "1.0"\n'
+            b'[package]\nname = "bar"\nversion = "0.1.0"\n\n[dependencies]\nserde = "1.0"\n'
         )
         path = _make_crate_tarball("bar", "0.1.0", toml_content)
         with open(path, "rb") as f:
