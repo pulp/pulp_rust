@@ -221,7 +221,12 @@ def test_cargo_publish_invalid_version_rejected(
     distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
     base = cargo_registry_url(distribution.base_path)
 
-    metadata = {"name": "validname", "vers": "not-a-version", "deps": [], "features": {}}
+    metadata = {
+        "name": "validname",
+        "vers": "not-a-version",
+        "deps": [],
+        "features": {},
+    }
     response = cargo_publish(base, metadata, b"fake")
     assert response.status_code == 400
     assert "semver" in response.json()["errors"][0]["detail"]
@@ -353,7 +358,7 @@ def test_cargo_publish_cross_repo_reuses_pull_through_content(
     cargo_registry_url,
 ):
     """Publishing a crate that was already cached via pull-through should reuse
-    the same global RustContent object.
+    the same global RustPackage object.
 
     Content in Pulp is shared within a domain. When a crate is first cached
     via pull-through and then published to a private registry, the publish
