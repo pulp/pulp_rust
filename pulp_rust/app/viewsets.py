@@ -18,9 +18,9 @@ from pulpcore.plugin.viewsets import RemoteFilter
 from . import models, serializers, tasks
 
 
-class RustContentFilter(core.ContentFilter):
+class RustPackageFilter(core.ContentFilter):
     """
-    FilterSet for RustContent (Cargo packages).
+    FilterSet for RustPackage (Cargo packages).
 
     Provides filtering capabilities for package name, version, and checksum.
     """
@@ -38,7 +38,7 @@ class RustContentFilter(core.ContentFilter):
     rust_version = CharFilter(field_name="rust_version")
 
     class Meta:
-        model = models.RustContent
+        model = models.RustPackage
         fields = [
             "name",
             "vers",
@@ -47,9 +47,9 @@ class RustContentFilter(core.ContentFilter):
         ]
 
 
-class RustContentViewSet(core.ContentViewSet):
+class RustPackageViewSet(core.ContentViewSet):
     """
-    ViewSet for RustContent (Cargo package versions).
+    ViewSet for RustPackage (Cargo package versions).
 
     Provides CRUD operations for Cargo package metadata including:
     - Package name and version
@@ -62,14 +62,14 @@ class RustContentViewSet(core.ContentViewSet):
     """
 
     endpoint_name = "packages"
-    queryset = models.RustContent.objects.prefetch_related("dependencies").all()
-    serializer_class = serializers.RustContentSerializer
-    filterset_class = RustContentFilter
+    queryset = models.RustPackage.objects.prefetch_related("dependencies").all()
+    serializer_class = serializers.PackageSerializer
+    filterset_class = RustPackageFilter
 
     @transaction.atomic
     def create(self, request):
         """
-        Create a new RustContent (Cargo package version).
+        Create a new RustPackage (Cargo package version).
 
         This handles creation of the package metadata along with its associated
         artifact (.crate file) and dependencies.
@@ -113,26 +113,26 @@ class RustRemoteViewSet(core.RemoteViewSet):
     """
     A ViewSet for RustRemote.
 
-    Similar to the RustContentViewSet above, define endpoint_name,
+    Similar to the RustPackageViewSet above, define endpoint_name,
     queryset and serializer, at a minimum.
     """
 
     endpoint_name = "rust"
     queryset = models.RustRemote.objects.all()
-    serializer_class = serializers.RustRemoteSerializer
+    serializer_class = serializers.RemoteSerializer
 
 
 class RustRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin):
     """
     A ViewSet for RustRepository.
 
-    Similar to the RustContentViewSet above, define endpoint_name,
+    Similar to the RustPackageViewSet above, define endpoint_name,
     queryset and serializer, at a minimum.
     """
 
     endpoint_name = "rust"
     queryset = models.RustRepository.objects.all()
-    serializer_class = serializers.RustRepositorySerializer
+    serializer_class = serializers.RepositorySerializer
 
     # This decorator is necessary since a sync operation is asyncrounous and returns
     # the id and href of the sync task.
@@ -178,7 +178,7 @@ class RustRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin)
         Add to the repository any new content that was cached using the remote since the last
         repository version was created.
 
-        The ``repository`` field has to be provided.
+        The `repository` field has to be provided.
         """
         serializer = serializers.RepositoryAddCachedContentSerializer(
             data=request.data, context={"request": request, "repository_pk": pk}
@@ -213,10 +213,10 @@ class RustDistributionViewSet(core.DistributionViewSet):
     """
     A ViewSet for RustDistribution.
 
-    Similar to the RustContentViewSet above, define endpoint_name,
+    Similar to the RustPackageViewSet above, define endpoint_name,
     queryset and serializer, at a minimum.
     """
 
     endpoint_name = "rust"
     queryset = models.RustDistribution.objects.all()
-    serializer_class = serializers.RustDistributionSerializer
+    serializer_class = serializers.DistributionSerializer

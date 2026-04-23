@@ -51,7 +51,7 @@ def _parse_crate_relative_path(relative_path):
     return crate_name, version
 
 
-class RustContent(Content):
+class RustPackage(Content):
     """
     The "rust" content type representing a Cargo package version.
 
@@ -131,7 +131,7 @@ class RustContent(Content):
     @staticmethod
     def init_from_artifact_and_relative_path(artifact, relative_path):
         """
-        Create an unsaved RustContent from a downloaded .crate artifact.
+        Create an unsaved RustPackage from a downloaded .crate artifact.
 
         Called by pulpcore's content handler during pull-through caching.
         Extracts full metadata (dependencies, features, etc.) from the
@@ -141,7 +141,7 @@ class RustContent(Content):
         with artifact.file.open("rb") as f:
             cargo_toml = extract_cargo_toml(f, crate_name, version)
 
-        content = RustContent(
+        content = RustPackage(
             name=crate_name,
             canonical_name=canonicalize_crate_name(crate_name),
             vers=version,
@@ -164,6 +164,7 @@ class RustContent(Content):
             )
 
     class Meta:
+        ref_name = "rust.Package"
         default_related_name = "%(app_label)s_%(model_name)s"
         unique_together = (("name", "vers", "cksum", "_pulp_domain"),)
 
@@ -172,7 +173,7 @@ class RustDependency(models.Model):
     """
     Represents a dependency of a Cargo package version.
 
-    Each RustContent (package version) can have multiple dependencies.
+    Each RustPackage (package version) can have multiple dependencies.
     Dependencies are stored as separate records to enable efficient querying
     and relationship tracking.
 
@@ -190,7 +191,7 @@ class RustDependency(models.Model):
     """
 
     # The package version that declares this dependency
-    content = models.ForeignKey(RustContent, on_delete=models.CASCADE, related_name="dependencies")
+    content = models.ForeignKey(RustPackage, on_delete=models.CASCADE, related_name="dependencies")
 
     # Name of the dependency as used in the code (may differ from package name if renamed)
     name = models.CharField(max_length=255, blank=False, null=False)
@@ -244,9 +245,32 @@ class RustDependency(models.Model):
         ]
 
 
+class RustPackageYank(Content):
+    """
+    A marker content type indicating a crate version is yanked in a repository.
+
+    This is a per-repository marker: its presence in a repository version means
+    the (name, vers) pair is yanked in that repository. Its absence means it is
+    not yanked. This allows yanked status to vary across repositories without
+    mutating the global RustPackage object.
+    """
+
+    TYPE = "rust_yank"
+    repo_key_fields = ("name", "vers")
+
+    name = models.CharField(max_length=255, db_index=True)
+    vers = models.CharField(max_length=64, db_index=True)
+
+    _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
+
+    class Meta:
+        default_related_name = "%(app_label)s_%(model_name)s"
+        unique_together = (("name", "vers", "_pulp_domain"),)
+
+
 class RustRemote(Remote):
     """
-    A Remote for RustContent.
+    A Remote for RustPackage.
 
     The `url` field should point to the sparse index root, optionally prefixed
     with `sparse+` (e.g. `sparse+https://index.crates.io/`).
@@ -284,44 +308,21 @@ class RustRemote(Remote):
     def get_remote_artifact_content_type(relative_path=None):
         """Return the content type for the given relative path."""
         if relative_path and relative_path.endswith(".crate"):
-            return RustContent
+            return RustPackage
         return None
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
 
 
-class RustPackageYank(Content):
-    """
-    A marker content type indicating a crate version is yanked in a repository.
-
-    This is a per-repository marker: its presence in a repository version means
-    the (name, vers) pair is yanked in that repository. Its absence means it is
-    not yanked. This allows yanked status to vary across repositories without
-    mutating the global RustContent object.
-    """
-
-    TYPE = "rust_yank"
-    repo_key_fields = ("name", "vers")
-
-    name = models.CharField(max_length=255, db_index=True)
-    vers = models.CharField(max_length=64, db_index=True)
-
-    _pulp_domain = models.ForeignKey("core.Domain", default=get_domain_pk, on_delete=models.PROTECT)
-
-    class Meta:
-        default_related_name = "%(app_label)s_%(model_name)s"
-        unique_together = (("name", "vers", "_pulp_domain"),)
-
-
 class RustRepository(Repository):
     """
-    A Repository for RustContent.
+    A Repository for RustPackage.
     """
 
     TYPE = "rust"
 
-    CONTENT_TYPES = [RustContent, RustPackageYank]
+    CONTENT_TYPES = [RustPackage, RustPackageYank]
     REMOTE_TYPES = [RustRemote]
     PULL_THROUGH_SUPPORTED = True
 
@@ -331,7 +332,7 @@ class RustRepository(Repository):
 
 class RustDistribution(Distribution):
     """
-    A Distribution for RustContent.
+    A Distribution for RustPackage.
 
     Define any additional fields for your new distribution if needed.
     """
