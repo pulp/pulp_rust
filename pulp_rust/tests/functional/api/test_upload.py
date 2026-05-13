@@ -1,6 +1,6 @@
 """Tests for uploading crate content via the Pulp REST API and verifying index fidelity."""
 
-from pulpcore.client.pulp_rust import RustDependency, RustRustContent
+from pulpcore.client.pulp_rust import RustDependency, RustPackage
 
 from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
 from pulp_rust.tests.functional.utils import (
@@ -39,9 +39,9 @@ def test_upload_and_index_fidelity(
     # 3. Upload the .crate as an artifact
     artifact = pulpcore_bindings.ArtifactsApi.create(crate_path)
 
-    # 4. Create the RustContent with metadata
+    # 4. Create the RustPackage with metadata
     content = rust_content_api_client.create(
-        RustRustContent(
+        RustPackage(
             artifact=artifact.pulp_href,
             relative_path=f"{crate_name}/{crate_name}-{crate_version}.crate",
             name=crate_name,
