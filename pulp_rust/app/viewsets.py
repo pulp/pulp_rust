@@ -1,13 +1,9 @@
-from django.db import transaction
 from django_filters import CharFilter
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.response import Response
 
 from pulpcore.plugin import viewsets as core
 from pulpcore.plugin.actions import ModifyRepositoryActionMixin
-from pulpcore.plugin.models import ContentArtifact
 from pulpcore.plugin.serializers import (
     AsyncOperationResponseSerializer,
     RepositorySyncURLSerializer,
@@ -47,16 +43,12 @@ class RustContentFilter(core.ContentFilter):
         ]
 
 
-class RustContentViewSet(core.ContentViewSet):
+class RustContentViewSet(core.ReadOnlyContentViewSet):
     """
-    ViewSet for RustContent (Cargo package versions).
+    A read-only ViewSet for RustContent (Cargo package versions).
 
-    Provides CRUD operations for Cargo package metadata including:
-    - Package name and version
-    - Dependencies with version requirements
-    - Feature flags
-    - Checksum verification
-    - Yanked status
+    Content is created via ``cargo publish`` (the Cargo registry API),
+    not through this viewset.
 
     API endpoint: /pulp/api/v3/content/rust/packages/
     """
@@ -66,35 +58,16 @@ class RustContentViewSet(core.ContentViewSet):
     serializer_class = serializers.RustContentSerializer
     filterset_class = RustContentFilter
 
-    @transaction.atomic
-    def create(self, request):
-        """
-        Create a new RustContent (Cargo package version).
-
-        This handles creation of the package metadata along with its associated
-        artifact (.crate file) and dependencies.
-        """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        # Extract artifact from validated data
-        _artifact = serializer.validated_data.pop("_artifact", None)
-
-        # Create the content (this also creates dependencies via serializer)
-        content = serializer.save()
-
-        # Associate the .crate file artifact with the content
-        if content.pk and _artifact:
-            # The relative path for the .crate file follows Cargo's naming convention:
-            # {name}/{name}-{version}.crate
-            relative_path = f"{content.name}/{content.name}-{content.vers}.crate"
-
-            ContentArtifact.objects.create(
-                artifact=_artifact, content=content, relative_path=relative_path
-            )
-
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
 
 
 class RustRemoteFilter(RemoteFilter):
@@ -109,30 +82,172 @@ class RustRemoteFilter(RemoteFilter):
         ]
 
 
-class RustRemoteViewSet(core.RemoteViewSet):
+class RustRemoteViewSet(core.RemoteViewSet, core.RolesMixin):
     """
     A ViewSet for RustRemote.
-
-    Similar to the RustContentViewSet above, define endpoint_name,
-    queryset and serializer, at a minimum.
     """
 
     endpoint_name = "rust"
     queryset = models.RustRemote.objects.all()
     serializer_class = serializers.RustRemoteSerializer
+    queryset_filtering_required_permission = "rust.view_rustremote"
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "my_permissions"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_perms:rust.add_rustremote",
+            },
+            {
+                "action": ["retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:rust.view_rustremote",
+            },
+            {
+                "action": ["update", "partial_update", "set_label", "unset_label"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.change_rustremote",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustremote",
+                ],
+            },
+            {
+                "action": ["destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.delete_rustremote",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustremote",
+                ],
+            },
+            {
+                "action": ["list_roles", "add_role", "remove_role"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.manage_roles_rustremote",
+                ],
+            },
+        ],
+        "creation_hooks": [
+            {
+                "function": "add_roles_for_object_creator",
+                "parameters": {"roles": "rust.rustremote_owner"},
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+
+    LOCKED_ROLES = {
+        "rust.rustremote_creator": ["rust.add_rustremote"],
+        "rust.rustremote_owner": [
+            "rust.view_rustremote",
+            "rust.change_rustremote",
+            "rust.delete_rustremote",
+            "rust.manage_roles_rustremote",
+        ],
+        "rust.rustremote_viewer": ["rust.view_rustremote"],
+    }
 
 
-class RustRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin):
+class RustRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin, core.RolesMixin):
     """
     A ViewSet for RustRepository.
-
-    Similar to the RustContentViewSet above, define endpoint_name,
-    queryset and serializer, at a minimum.
     """
 
     endpoint_name = "rust"
     queryset = models.RustRepository.objects.all()
     serializer_class = serializers.RustRepositorySerializer
+    queryset_filtering_required_permission = "rust.view_rustrepository"
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "my_permissions"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_perms:rust.add_rustrepository",
+                    "has_remote_param_model_or_domain_or_obj_perms:rust.view_rustremote",
+                ],
+            },
+            {
+                "action": ["retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:rust.view_rustrepository",
+            },
+            {
+                "action": ["destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.delete_rustrepository",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustrepository",
+                ],
+            },
+            {
+                "action": ["update", "partial_update", "set_label", "unset_label"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.change_rustrepository",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustrepository",
+                    "has_remote_param_model_or_domain_or_obj_perms:rust.view_rustremote",
+                ],
+            },
+            {
+                "action": ["modify", "add_cached_content"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.modify_rustrepository",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustrepository",
+                ],
+            },
+            {
+                "action": ["list_roles", "add_role", "remove_role"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.manage_roles_rustrepository",
+                ],
+            },
+        ],
+        "creation_hooks": [
+            {
+                "function": "add_roles_for_object_creator",
+                "parameters": {"roles": "rust.rustrepository_owner"},
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+
+    LOCKED_ROLES = {
+        "rust.rustrepository_creator": ["rust.add_rustrepository"],
+        "rust.rustrepository_owner": [
+            "rust.view_rustrepository",
+            "rust.change_rustrepository",
+            "rust.delete_rustrepository",
+            "rust.modify_rustrepository",
+            "rust.manage_roles_rustrepository",
+        ],
+        "rust.rustrepository_viewer": ["rust.view_rustrepository"],
+    }
 
     # This decorator is necessary since a sync operation is asyncrounous and returns
     # the id and href of the sync task.
@@ -154,7 +269,8 @@ class RustRepositoryViewSet(core.RepositoryViewSet, ModifyRepositoryActionMixin)
 
         result = dispatch(
             tasks.synchronize,
-            [repository, remote],
+            exclusive_resources=[repository],
+            shared_resources=[remote],
             kwargs={
                 "remote_pk": str(remote.pk),
                 "repository_pk": str(repository.pk),
@@ -208,15 +324,107 @@ class RustRepositoryVersionViewSet(core.RepositoryVersionViewSet):
 
     parent_viewset = RustRepositoryViewSet
 
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": (
+                    "has_repository_model_or_domain_or_obj_perms:rust.view_rustrepository"
+                ),
+            },
+            {
+                "action": ["destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_repository_model_or_domain_or_obj_perms:rust.delete_rustrepository",
+                    "has_repository_model_or_domain_or_obj_perms:rust.view_rustrepository",
+                ],
+            },
+        ],
+    }
 
-class RustDistributionViewSet(core.DistributionViewSet):
+
+class RustDistributionViewSet(core.DistributionViewSet, core.RolesMixin):
     """
     A ViewSet for RustDistribution.
-
-    Similar to the RustContentViewSet above, define endpoint_name,
-    queryset and serializer, at a minimum.
     """
 
     endpoint_name = "rust"
     queryset = models.RustDistribution.objects.all()
     serializer_class = serializers.RustDistributionSerializer
+    queryset_filtering_required_permission = "rust.view_rustdistribution"
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "my_permissions"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_perms:rust.add_rustdistribution",
+                    "has_repo_or_repo_ver_param_model_or_domain_or_obj_perms:"
+                    "rust.view_rustrepository",
+                ],
+            },
+            {
+                "action": ["retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": "has_model_or_domain_or_obj_perms:rust.view_rustdistribution",
+            },
+            {
+                "action": ["update", "partial_update", "set_label", "unset_label"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.change_rustdistribution",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustdistribution",
+                    "has_repo_or_repo_ver_param_model_or_domain_or_obj_perms:"
+                    "rust.view_rustrepository",
+                ],
+            },
+            {
+                "action": ["destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.delete_rustdistribution",
+                    "has_model_or_domain_or_obj_perms:rust.view_rustdistribution",
+                ],
+            },
+            {
+                "action": ["list_roles", "add_role", "remove_role"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_model_or_domain_or_obj_perms:rust.manage_roles_rustdistribution",
+                ],
+            },
+        ],
+        "creation_hooks": [
+            {
+                "function": "add_roles_for_object_creator",
+                "parameters": {"roles": "rust.rustdistribution_owner"},
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+
+    LOCKED_ROLES = {
+        "rust.rustdistribution_creator": ["rust.add_rustdistribution"],
+        "rust.rustdistribution_owner": [
+            "rust.view_rustdistribution",
+            "rust.change_rustdistribution",
+            "rust.delete_rustdistribution",
+            "rust.manage_roles_rustdistribution",
+        ],
+        "rust.rustdistribution_viewer": ["rust.view_rustdistribution"],
+    }
