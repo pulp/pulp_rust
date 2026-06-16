@@ -6,6 +6,7 @@ from django.db import models
 from django_lifecycle import AFTER_CREATE, hook
 
 from pulpcore.plugin.models import (
+    AutoAddObjPermsMixin,
     Content,
     Distribution,
     Remote,
@@ -244,7 +245,7 @@ class RustDependency(models.Model):
         ]
 
 
-class RustRemote(Remote):
+class RustRemote(Remote, AutoAddObjPermsMixin):
     """
     A Remote for RustContent.
 
@@ -289,6 +290,9 @@ class RustRemote(Remote):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("manage_roles_rustremote", "Can manage roles on rust remotes"),
+        ]
 
 
 class RustPackageYank(Content):
@@ -314,7 +318,7 @@ class RustPackageYank(Content):
         unique_together = (("name", "vers", "_pulp_domain"),)
 
 
-class RustRepository(Repository):
+class RustRepository(Repository, AutoAddObjPermsMixin):
     """
     A Repository for RustContent.
     """
@@ -327,9 +331,13 @@ class RustRepository(Repository):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("modify_rustrepository", "Can modify content of the repository"),
+            ("manage_roles_rustrepository", "Can manage roles on rust repositories"),
+        ]
 
 
-class RustDistribution(Distribution):
+class RustDistribution(Distribution, AutoAddObjPermsMixin):
     """
     A Distribution for RustContent.
 
@@ -342,3 +350,6 @@ class RustDistribution(Distribution):
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+        permissions = [
+            ("manage_roles_rustdistribution", "Can manage roles on rust distributions"),
+        ]
