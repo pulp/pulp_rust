@@ -1,6 +1,11 @@
+import hashlib
+import secrets
+
 from django_filters import CharFilter
 from drf_spectacular.utils import extend_schema
 from rest_framework.decorators import action
+from rest_framework.mixins import CreateModelMixin, DestroyModelMixin, ListModelMixin
+from rest_framework.response import Response
 
 from pulpcore.plugin import viewsets as core
 from pulpcore.plugin.actions import ModifyRepositoryActionMixin
@@ -9,7 +14,7 @@ from pulpcore.plugin.serializers import (
     RepositorySyncURLSerializer,
 )
 from pulpcore.plugin.tasking import dispatch
-from pulpcore.plugin.viewsets import RemoteFilter
+from pulpcore.plugin.viewsets import NamedModelViewSet, RemoteFilter
 
 from . import models, serializers, tasks
 
@@ -80,6 +85,37 @@ class RustRemoteFilter(RemoteFilter):
         fields = [
             # ...
         ]
+
+
+class CargoTokenViewSet(NamedModelViewSet, CreateModelMixin, ListModelMixin, DestroyModelMixin):
+    """Manage Cargo API tokens for the current user."""
+
+    endpoint_name = "cargo/tokens"
+    queryset = models.RustCargoToken.objects.all()
+    serializer_class = serializers.CargoTokenSerializer
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["create", "list", "retrieve", "destroy"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+        ],
+    }
+
+    def get_queryset(self):
+        return super().get_queryset().filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        raw_token = f"crg_{secrets.token_hex(20)}"
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        serializer.save(user=request.user, token_hash=token_hash)
+        data = serializer.data
+        data["token"] = raw_token
+        return Response(data, status=201)
 
 
 class RustRemoteViewSet(core.RemoteViewSet, core.RolesMixin):
@@ -425,6 +461,13 @@ class RustDistributionViewSet(core.DistributionViewSet, core.RolesMixin):
             "rust.change_rustdistribution",
             "rust.delete_rustdistribution",
             "rust.manage_roles_rustdistribution",
+            "rust.publish_rustdistribution",
+            "rust.yank_rustdistribution",
+        ],
+        "rust.rustdistribution_publisher": [
+            "rust.view_rustdistribution",
+            "rust.publish_rustdistribution",
+            "rust.yank_rustdistribution",
         ],
         "rust.rustdistribution_viewer": ["rust.view_rustdistribution"],
     }

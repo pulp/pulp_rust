@@ -17,6 +17,7 @@ from django.shortcuts import get_object_or_404, redirect
 from drf_spectacular.utils import extend_schema
 from dynaconf import settings
 from rest_framework.exceptions import Throttled
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
@@ -24,7 +25,7 @@ from rest_framework.viewsets import ViewSet
 from pulpcore.plugin.tasking import dispatch
 from pulpcore.plugin.util import get_domain
 
-from pulp_rust.app.auth import require_cargo_token
+from pulp_rust.app.auth import CargoTokenAuthentication
 from pulp_rust.app.models import (
     RustContent,
     RustDistribution,
@@ -292,11 +293,10 @@ class CargoMeApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html
     """
 
-    authentication_classes = []
-    permission_classes = []
+    authentication_classes = [CargoTokenAuthentication]
+    permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
-    @require_cargo_token
     def get(self, request, **kwargs):
         return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
@@ -311,10 +311,8 @@ class CargoPublishApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish
     """
 
-    # Authentication uses a stub token via @require_cargo_token decorator.
-    # TODO: Replace with proper per-user token auth and RBAC integration.
-    authentication_classes = []
-    permission_classes = []
+    authentication_classes = [CargoTokenAuthentication]
+    permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
     def get_distribution(self):
@@ -330,7 +328,6 @@ class CargoPublishApiView(APIView):
             status=status,
         )
 
-    @require_cargo_token
     def put(self, request, **kwargs):
         """
         Handle ``cargo publish`` requests.
@@ -340,6 +337,9 @@ class CargoPublishApiView(APIView):
         repository, then dispatches a publish task.
         """
         distro = self.get_distribution()
+
+        if not request.user.has_perm("rust.publish_rustdistribution", distro):
+            return self._error_response("insufficient permissions", status=403)
 
         if not distro.allow_uploads:
             return self._error_response("this registry does not allow uploads", status=403)
@@ -419,10 +419,21 @@ class CargoDownloadApiView(APIView):
     View for Cargo's crate download, readme, yank, and unyank endpoints.
     """
 
-    # Authentication disabled for now
-    authentication_classes = []
-    permission_classes = []
+    authentication_classes = [CargoTokenAuthentication]
     renderer_classes = [PlainTextRenderer, JSONRenderer]
+
+    def get_permissions(self):
+        if self.request.method in ("DELETE", "PUT"):
+            return [IsAuthenticated()]
+        return []
+
+    @staticmethod
+    def _error_response(detail, status=400):
+        return HttpResponse(
+            json.dumps({"errors": [{"detail": detail}]}),
+            content_type="application/json",
+            status=status,
+        )
 
     def get_full_path(self, base_path, pulp_domain=None):
         if settings.DOMAIN_ENABLED:
@@ -458,7 +469,6 @@ class CargoDownloadApiView(APIView):
         else:
             raise Http404(f"Unknown action: {rest}")
 
-    @require_cargo_token
     def delete(self, request, name, version, rest, **kwargs):
         """
         Responds to DELETE requests for yanking crate versions.
@@ -470,6 +480,8 @@ class CargoDownloadApiView(APIView):
             raise Http404(f"Unknown action: {rest}")
 
         distro = self.get_distribution()
+        if not request.user.has_perm("rust.yank_rustdistribution", distro):
+            return self._error_response("insufficient permissions", status=403)
         if not distro.repository:
             raise Http404("No repository associated with this distribution")
 
@@ -499,7 +511,6 @@ class CargoDownloadApiView(APIView):
         has_task_completed(task)
         return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
-    @require_cargo_token
     def put(self, request, name, version, rest, **kwargs):
         """
         Responds to PUT requests for unyanking crate versions.
@@ -511,6 +522,8 @@ class CargoDownloadApiView(APIView):
             raise Http404(f"Unknown action: {rest}")
 
         distro = self.get_distribution()
+        if not request.user.has_perm("rust.yank_rustdistribution", distro):
+            return self._error_response("insufficient permissions", status=403)
         if not distro.repository:
             raise Http404("No repository associated with this distribution")
 

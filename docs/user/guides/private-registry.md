@@ -36,24 +36,9 @@ index = "sparse+http://<pulp-host>/pulp/cargo/my-crates/"
 
 ## Authentication
 
-State-changing operations (publishing, yanking, and unyanking) require an authorization token.
-Configure the token for your registry in `~/.cargo/credentials.toml`:
-
-```toml
-[registries.my-crates]
-token = "i_understand_that_pulp_rust_does_not_support_proper_auth_yet"
-```
-
-Alternatively, you can pass the token on the command line:
-
-```bash
-cargo publish --registry my-crates --token "i_understand_that_pulp_rust_does_not_support_proper_auth_yet"
-```
-
-!!! warning
-    This is a temporary stub token. Proper token-based authentication is planned for a future
-    release. The stub token exists to ensure that the authentication workflow is exercised and that
-    state-changing operations are not completely open.
+State-changing operations (publishing, yanking, and unyanking) require a Cargo API token.
+See the [Authentication & Authorization](authentication.md) guide for how to create tokens
+and manage access.
 
 Read-only operations (downloading crates, browsing the index) do not require a token.
 
