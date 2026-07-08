@@ -275,6 +275,23 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
         model = models.RustDistribution
 
 
+class CargoTokenSerializer(core_serializers.ModelSerializer):
+    pulp_href = core_serializers.IdentityField(view_name="cargo/tokens-detail")
+    token = serializers.CharField(
+        read_only=True,
+        help_text=_("The token value. Shown once at creation, null otherwise."),
+    )
+
+    class Meta:
+        model = models.RustCargoToken
+        fields = core_serializers.ModelSerializer.Meta.fields + (
+            "name",
+            "token",
+            "last_used",
+        )
+        read_only_fields = ("token", "last_used")
+
+
 class YankSerializer(serializers.Serializer):
     """Serializer for yank/unyank operations on a repository."""
 

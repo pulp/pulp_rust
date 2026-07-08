@@ -8,12 +8,10 @@ from dataclasses import dataclass
 import aiohttp
 import requests
 
-from pulp_rust.app.auth import STUB_TOKEN
 from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
 
 CRATES_IO_URL = "sparse+https://index.crates.io/"
 CRATES_IO_DOWNLOAD_URL = "https://static.crates.io/crates/"
-CARGO_AUTH_HEADERS = {"Authorization": STUB_TOKEN}
 
 # Fields from the sparse index that Pulp should faithfully reproduce.
 # "yanked" is excluded because it depends on per-repo yank state, not upstream.
@@ -88,7 +86,7 @@ def _build_cargo_publish_body(metadata, crate_bytes):
     )
 
 
-def cargo_publish(url, metadata, crate_bytes, content_type=None):
+def cargo_publish(url, metadata, crate_bytes, content_type=None, headers=None):
     """Send a publish request mimicking ``cargo publish``.
 
     The body is a custom binary format (length-prefixed JSON metadata +
@@ -97,7 +95,7 @@ def cargo_publish(url, metadata, crate_bytes, content_type=None):
     ``"application/octet-stream"`` matches the fix proposed upstream.
     """
     body = _build_cargo_publish_body(metadata, crate_bytes)
-    headers = dict(CARGO_AUTH_HEADERS)
+    headers = dict(headers or {})
     if content_type is not None:
         headers["Content-Type"] = content_type
     return cargo_api_request(
@@ -119,6 +117,24 @@ def minimal_publish_request(url, headers=None):
         "PUT",
         f"{url}api/v1/crates/new",
         data=_build_cargo_publish_body(metadata, b"fake"),
+        headers=headers or {},
+    )
+
+
+def cargo_yank(base_url, name, version, headers=None):
+    """Send a yank request for a crate version."""
+    return cargo_api_request(
+        "DELETE",
+        f"{base_url}api/v1/crates/{name}/{version}/yank",
+        headers=headers or {},
+    )
+
+
+def cargo_unyank(base_url, name, version, headers=None):
+    """Send an unyank request for a crate version."""
+    return cargo_api_request(
+        "PUT",
+        f"{base_url}api/v1/crates/{name}/{version}/unyank",
         headers=headers or {},
     )
 

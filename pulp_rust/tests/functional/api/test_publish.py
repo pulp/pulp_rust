@@ -12,6 +12,8 @@ so keep these fidelity checks passing.
 
 from urllib.parse import urljoin
 
+import pytest
+
 from pulp_rust.tests.functional.utils import (
     CRATES_IO_URL,
     assert_index_entry_matches_upstream,
@@ -23,12 +25,20 @@ from pulp_rust.tests.functional.utils import (
 )
 
 
+@pytest.fixture
+def admin_auth_headers(rust_token_factory, pulp_admin_user):
+    """Create a Cargo token for the admin user and return auth headers."""
+    token = rust_token_factory(pulp_admin_user)
+    return {"Authorization": token.token}
+
+
 def test_cargo_publish_and_index_fidelity(
     delete_orphans_pre,
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
     upstream_index_entry,
+    admin_auth_headers,
 ):
     """Publish a crate via the Cargo publish API and verify the index matches crates.io."""
     crate_name = "serde"
@@ -44,7 +54,7 @@ def test_cargo_publish_and_index_fidelity(
     distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
     base = cargo_registry_url(distribution.base_path)
 
-    response = cargo_publish(base, metadata, crate_bytes)
+    response = cargo_publish(base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
     result = response.json()
     assert "warnings" in result
@@ -59,6 +69,7 @@ def test_cargo_publish_duplicate_rejected(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing the same crate version twice should be rejected."""
     crate_name = "serde"
@@ -75,11 +86,11 @@ def test_cargo_publish_duplicate_rejected(
     base = cargo_registry_url(distribution.base_path)
 
     # First publish should succeed
-    response = cargo_publish(base, metadata, crate_bytes)
+    response = cargo_publish(base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # Second publish of the same version should be rejected
-    response = cargo_publish(base, metadata, crate_bytes)
+    response = cargo_publish(base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 400
     errors = response.json()["errors"]
     assert any("already uploaded" in e["detail"] for e in errors)
@@ -91,6 +102,7 @@ def test_cargo_publish_ignores_tampered_json_metadata(
     rust_distribution_factory,
     cargo_registry_url,
     upstream_index_entry,
+    admin_auth_headers,
 ):
     """Tampered JSON metadata should be ignored in favor of the Cargo.toml in the tarball.
 
@@ -125,7 +137,7 @@ def test_cargo_publish_ignores_tampered_json_metadata(
     distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
     base = cargo_registry_url(distribution.base_path)
 
-    response = cargo_publish(base, metadata, crate_bytes)
+    response = cargo_publish(base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # The index entry should match crates.io (i.e. the Cargo.toml), not the tampered JSON
@@ -138,6 +150,7 @@ def test_cargo_publish_octet_stream_content_type(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publish should accept Content-Type: application/octet-stream.
 
@@ -157,7 +170,13 @@ def test_cargo_publish_octet_stream_content_type(
     distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
     base = cargo_registry_url(distribution.base_path)
 
-    response = cargo_publish(base, metadata, crate_bytes, content_type="application/octet-stream")
+    response = cargo_publish(
+        base,
+        metadata,
+        crate_bytes,
+        content_type="application/octet-stream",
+        headers=admin_auth_headers,
+    )
     assert response.status_code == 200, response.text
 
 
@@ -165,6 +184,7 @@ def test_cargo_publish_uploads_disabled(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing to a distribution with allow_uploads=False should be rejected."""
     repository = rust_repo_factory()
@@ -172,7 +192,7 @@ def test_cargo_publish_uploads_disabled(
     base = cargo_registry_url(distribution.base_path)
 
     metadata = {"name": "foo", "vers": "0.1.0", "deps": [], "features": {}}
-    response = cargo_publish(base, metadata, b"fake-crate-data")
+    response = cargo_publish(base, metadata, b"fake-crate-data", headers=admin_auth_headers)
     assert response.status_code == 403
     errors = response.json()["errors"]
     assert any("does not allow uploads" in e["detail"] for e in errors)
@@ -182,6 +202,7 @@ def test_cargo_publish_invalid_name_rejected(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing with an invalid crate name should be rejected."""
     repository = rust_repo_factory()
@@ -190,7 +211,7 @@ def test_cargo_publish_invalid_name_rejected(
 
     # Starts with a digit
     metadata = {"name": "123invalid", "vers": "0.1.0", "deps": [], "features": {}}
-    response = cargo_publish(base, metadata, b"fake")
+    response = cargo_publish(base, metadata, b"fake", headers=admin_auth_headers)
     assert response.status_code == 400
     assert "crate name" in response.json()["errors"][0]["detail"]
 
@@ -199,6 +220,7 @@ def test_cargo_publish_name_too_long_rejected(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing with a crate name exceeding 64 characters should be rejected."""
     repository = rust_repo_factory()
@@ -206,7 +228,7 @@ def test_cargo_publish_name_too_long_rejected(
     base = cargo_registry_url(distribution.base_path)
 
     metadata = {"name": "a" * 65, "vers": "0.1.0", "deps": [], "features": {}}
-    response = cargo_publish(base, metadata, b"fake")
+    response = cargo_publish(base, metadata, b"fake", headers=admin_auth_headers)
     assert response.status_code == 400
     assert "maximum length" in response.json()["errors"][0]["detail"]
 
@@ -215,6 +237,7 @@ def test_cargo_publish_invalid_version_rejected(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing with an invalid version should be rejected."""
     repository = rust_repo_factory()
@@ -222,7 +245,7 @@ def test_cargo_publish_invalid_version_rejected(
     base = cargo_registry_url(distribution.base_path)
 
     metadata = {"name": "validname", "vers": "not-a-version", "deps": [], "features": {}}
-    response = cargo_publish(base, metadata, b"fake")
+    response = cargo_publish(base, metadata, b"fake", headers=admin_auth_headers)
     assert response.status_code == 400
     assert "semver" in response.json()["errors"][0]["detail"]
 
@@ -232,6 +255,7 @@ def test_cargo_publish_canonical_name_conflict_rejected(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing with a canonically-equivalent name (case or hyphen/underscore) should fail."""
     crate_name = "serde"
@@ -248,12 +272,12 @@ def test_cargo_publish_canonical_name_conflict_rejected(
     base = cargo_registry_url(distribution.base_path)
 
     # First publish should succeed
-    response = cargo_publish(base, metadata, crate_bytes)
+    response = cargo_publish(base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # Uppercase variant should be rejected as a duplicate
     metadata_upper = dict(metadata, name="Serde")
-    response = cargo_publish(base, metadata_upper, b"fake")
+    response = cargo_publish(base, metadata_upper, b"fake", headers=admin_auth_headers)
     assert response.status_code == 400
     assert "already uploaded" in response.json()["errors"][0]["detail"]
 
@@ -265,6 +289,7 @@ def test_cargo_publish_cross_repo_reuses_content(
     rust_distribution_factory,
     rust_content_api_client,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing the same crate to two repos should reuse the global content object."""
     crate_name = "serde"
@@ -281,7 +306,7 @@ def test_cargo_publish_cross_repo_reuses_content(
     distro_a = rust_distribution_factory(repository=repo_a.pulp_href, allow_uploads=True)
     base_a = cargo_registry_url(distro_a.base_path)
 
-    response = cargo_publish(base_a, metadata, crate_bytes)
+    response = cargo_publish(base_a, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # Publish to second repository — should succeed
@@ -289,7 +314,7 @@ def test_cargo_publish_cross_repo_reuses_content(
     distro_b = rust_distribution_factory(repository=repo_b.pulp_href, allow_uploads=True)
     base_b = cargo_registry_url(distro_b.base_path)
 
-    response = cargo_publish(base_b, metadata, crate_bytes)
+    response = cargo_publish(base_b, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # Verify the same content object is present in both repos (same pulp_href)
@@ -313,6 +338,7 @@ def test_cargo_publish_build_metadata_collision_rejected(
     rust_repo_factory,
     rust_distribution_factory,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing versions that differ only in build metadata should be rejected.
 
@@ -333,12 +359,12 @@ def test_cargo_publish_build_metadata_collision_rejected(
     base = cargo_registry_url(distribution.base_path)
 
     # First publish should succeed
-    response = cargo_publish(base, metadata, crate_bytes)
+    response = cargo_publish(base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # Same version with build metadata appended should be rejected
     metadata_with_build = dict(metadata, vers="1.0.210+build1")
-    response = cargo_publish(base, metadata_with_build, b"fake")
+    response = cargo_publish(base, metadata_with_build, b"fake", headers=admin_auth_headers)
     assert response.status_code == 400
     assert "already uploaded" in response.json()["errors"][0]["detail"]
 
@@ -351,6 +377,7 @@ def test_cargo_publish_cross_repo_reuses_pull_through_content(
     rust_distribution_factory,
     rust_content_api_client,
     cargo_registry_url,
+    admin_auth_headers,
 ):
     """Publishing a crate that was already cached via pull-through should reuse
     the same global RustContent object.
@@ -390,7 +417,7 @@ def test_cargo_publish_cross_repo_reuses_pull_through_content(
     pub_distro = rust_distribution_factory(repository=pub_repo.pulp_href, allow_uploads=True)
     pub_base = cargo_registry_url(pub_distro.base_path)
 
-    response = cargo_publish(pub_base, metadata, crate_bytes)
+    response = cargo_publish(pub_base, metadata, crate_bytes, headers=admin_auth_headers)
     assert response.status_code == 200, response.text
 
     # --- Verify: same content object in both repos ---

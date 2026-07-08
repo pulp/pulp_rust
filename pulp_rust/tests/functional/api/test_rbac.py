@@ -7,49 +7,6 @@ from pulpcore.client.pulp_rust.exceptions import ApiException
 from pulp_rust.tests.functional.utils import CRATES_IO_URL
 
 
-@pytest.fixture
-def gen_users(gen_user):
-    """Create three users with viewer, creator, and no roles for the given resources."""
-
-    def _gen_users(role_names=None):
-        if role_names is None:
-            role_names = []
-        if isinstance(role_names, str):
-            role_names = [role_names]
-        viewer_roles = [f"rust.{role}_viewer" for role in role_names]
-        creator_roles = [f"rust.{role}_creator" for role in role_names]
-        alice = gen_user(model_roles=viewer_roles)
-        bob = gen_user(model_roles=creator_roles)
-        charlie = gen_user()
-        return alice, bob, charlie
-
-    return _gen_users
-
-
-@pytest.fixture
-def try_action(monitor_task):
-    """Attempt an API action as a given user and assert the expected HTTP status."""
-
-    def _try_action(user, api_client, action, expected_status, *args, **kwargs):
-        action_api = getattr(api_client, f"{action}_with_http_info")
-        try:
-            with user:
-                response = action_api(*args, **kwargs)
-            data = response.data
-            status_code = response.status_code
-            if hasattr(data, "task") and data.task:
-                data = monitor_task(data.task)
-        except ApiException as e:
-            assert e.status == expected_status, f"Expected {expected_status}, got {e.status}: {e}"
-        else:
-            assert status_code == expected_status, (
-                f"Expected {expected_status}, got {status_code} for {action}"
-            )
-            return data
-
-    return _try_action
-
-
 class TestRepositoryRBAC:
     """Test RBAC for Rust repositories."""
 

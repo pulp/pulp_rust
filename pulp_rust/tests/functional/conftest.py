@@ -5,11 +5,13 @@ import pytest
 
 from pulpcore.client.pulp_rust import (
     ApiClient,
+    CargoTokensApi,
     ContentPackagesApi,
     DistributionsRustApi,
     RemotesRustApi,
     RepositoriesRustApi,
 )
+from pulpcore.client.pulp_rust.exceptions import ApiException
 
 from pulp_rust.tests.functional.utils import (
     CRATES_IO_URL,
@@ -44,6 +46,23 @@ def rust_repo_api_client(rust_client):
 @pytest.fixture(scope="session")
 def rust_remote_api_client(rust_client):
     return RemotesRustApi(rust_client)
+
+
+@pytest.fixture(scope="session")
+def rust_token_api_client(rust_client):
+    return CargoTokensApi(rust_client)
+
+
+@pytest.fixture
+def rust_token_factory(rust_token_api_client, add_to_cleanup):
+    def _rust_token_factory(user, **kwargs):
+        kwargs.setdefault("name", str(uuid.uuid4()))
+        with user:
+            token_response = rust_token_api_client.create(kwargs)
+        add_to_cleanup(rust_token_api_client, token_response.pulp_href)
+        return token_response
+
+    return _rust_token_factory
 
 
 @pytest.fixture
@@ -144,3 +163,46 @@ def populated_repo(
 def upstream_index_entry():
     """Fetch the canonical index entry for serde 1.0.210 from crates.io (once per module)."""
     return get_index_entry("https://index.crates.io/", "se/rd/serde", "1.0.210")
+
+
+@pytest.fixture
+def gen_users(gen_user):
+    """Create three users with viewer, creator, and no roles for the given resources."""
+
+    def _gen_users(role_names=None):
+        if role_names is None:
+            role_names = []
+        if isinstance(role_names, str):
+            role_names = [role_names]
+        viewer_roles = [f"rust.{role}_viewer" for role in role_names]
+        creator_roles = [f"rust.{role}_creator" for role in role_names]
+        alice = gen_user(model_roles=viewer_roles)
+        bob = gen_user(model_roles=creator_roles)
+        charlie = gen_user()
+        return alice, bob, charlie
+
+    return _gen_users
+
+
+@pytest.fixture
+def try_action(monitor_task):
+    """Attempt an API action as a given user and assert the expected HTTP status."""
+
+    def _try_action(user, api_client, action, expected_status, *args, **kwargs):
+        action_api = getattr(api_client, f"{action}_with_http_info")
+        try:
+            with user:
+                response = action_api(*args, **kwargs)
+            data = response.data
+            status_code = response.status_code
+            if hasattr(data, "task") and data.task:
+                data = monitor_task(data.task)
+        except ApiException as e:
+            assert e.status == expected_status, f"Expected {expected_status}, got {e.status}: {e}"
+        else:
+            assert status_code == expected_status, (
+                f"Expected {expected_status}, got {status_code} for {action}"
+            )
+            return data
+
+    return _try_action

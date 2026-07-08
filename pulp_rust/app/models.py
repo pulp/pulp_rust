@@ -2,11 +2,13 @@ import json
 import urllib.request
 from logging import getLogger
 
+from django.conf import settings
 from django.db import models
 from django_lifecycle import AFTER_CREATE, hook
 
 from pulpcore.plugin.models import (
     AutoAddObjPermsMixin,
+    BaseModel,
     Content,
     Distribution,
     Remote,
@@ -352,4 +354,18 @@ class RustDistribution(Distribution, AutoAddObjPermsMixin):
         default_related_name = "%(app_label)s_%(model_name)s"
         permissions = [
             ("manage_roles_rustdistribution", "Can manage roles on rust distributions"),
+            ("publish_rustdistribution", "Can publish crates to this distribution"),
+            ("yank_rustdistribution", "Can yank/unyank crates in this distribution"),
         ]
+
+
+class RustCargoToken(BaseModel):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cargo_tokens"
+    )
+    name = models.CharField(max_length=255, blank=False, null=False)
+    token_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    last_used = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        default_related_name = "%(app_label)s_%(model_name)s"
