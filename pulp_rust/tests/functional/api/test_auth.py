@@ -198,7 +198,7 @@ def test_token_not_returned_on_list(
     tokens = rust_token_api_client.list()
     assert tokens.count >= 1
     for t in tokens.results:
-        assert t.token is None
+        assert not hasattr(t, "token")
 
 
 # --- Distribution-scoped permissions ---

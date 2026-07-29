@@ -107,13 +107,18 @@ class CargoTokenViewSet(NamedModelViewSet, CreateModelMixin, ListModelMixin, Des
     def get_queryset(self):
         return super().get_queryset().filter(user=self.request.user)
 
+    def get_serializer_class(self):
+        if self.action == "create":
+            return serializers.CargoTokenCreateResponseSerializer
+        return serializers.CargoTokenSerializer
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         raw_token = f"crg_{secrets.token_hex(20)}"
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
         serializer.save(user=request.user, token_hash=token_hash)
-        data = serializer.data
+        data = self.get_serializer(serializer.instance).data
         data["token"] = raw_token
         return Response(data, status=201)
 
