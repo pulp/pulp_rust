@@ -331,6 +331,15 @@ class RustRepository(Repository, AutoAddObjPermsMixin):
     REMOTE_TYPES = [RustRemote]
     PULL_THROUGH_SUPPORTED = True
 
+    # Type of repository, can be EITHER cache or private
+    repo_type = models.CharField(
+        max_length=16,
+        choices=[
+            ("cache", "Caching for pull-through"),
+            ("private", "Private for uploads"),
+        ],
+    )
+
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
         permissions = [

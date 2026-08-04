@@ -226,7 +226,7 @@ def test_distribution_detach_remote(
 ):
     """A remote can be attached and detached from a distribution."""
     remote = rust_remote_factory(url=CRATES_IO_URL)
-    repo = rust_repo_factory()
+    repo = rust_repo_factory(repo_type="cache")
     distro = rust_distribution_factory(remote=remote.pulp_href, repository=repo.pulp_href)
 
     distro = rust_distro_api_client.read(distro.pulp_href)

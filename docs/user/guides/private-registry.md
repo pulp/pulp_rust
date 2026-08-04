@@ -6,8 +6,12 @@ Rust packages.
 
 ## Create a Repository
 
+Every repository has a `repo_type` that must be set at creation: `private` for hosting uploaded
+crates, or `cache` for pull-through caching from an upstream registry. This prevents mixing
+content from different sources in the same repository.
+
 ```bash
-pulp rust repository create --name my-crates
+pulp rust repository create --name my-crates --repo-type private
 ```
 
 ## Create a Distribution
@@ -130,7 +134,7 @@ a distribution cannot have both `allow_uploads` and a `remote` set at the same t
 ```bash
 # Set up a separate pull-through cache for crates.io
 pulp rust remote create --name crates-io --url "sparse+https://index.crates.io/" --policy on_demand
-pulp rust repository create --name crates-io-cache --remote crates-io --retain-repo-versions 1
+pulp rust repository create --name crates-io-cache --repo-type cache --remote crates-io --retain-repo-versions 1
 pulp rust distribution create \
     --name crates-io-cache \
     --base-path crates-io-cache \
@@ -166,10 +170,11 @@ publishing `my-crate` when `my_crate` already exists in the same repository is r
 duplicate. Yank and unyank operations use the same matching.
 
 !!! tip "Separate Registries"
-    Keep private registries and public pull-through caches as separate distributions (and
-    preferably separate repositories). This makes it easy to audit which registries have
-    upstream access and reduces the risk of accidental misconfiguration. For additional
-    isolation or access control, they could be kept on entirely separate domains.
+    Pulp enforces that private registries and pull-through caches use separate repositories
+    via the `repo_type` field. A distribution with `allow_uploads` can only link to a `private`
+    repository, and a distribution with a `remote` can only link to a `cache` repository. This
+    prevents dependency confusion attacks where uploaded content could override cached upstream
+    content.
 
 ## Further Reading
 
