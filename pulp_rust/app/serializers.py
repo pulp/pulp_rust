@@ -225,7 +225,7 @@ class RustRepositorySerializer(core_serializers.RepositorySerializer):
     """
 
     class Meta:
-        fields = core_serializers.RepositorySerializer.Meta.fields
+        fields = core_serializers.RepositorySerializer.Meta.fields + ("repo_type",)
         model = models.RustRepository
 
 
@@ -261,6 +261,7 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
         allow_uploads = data.get(
             "allow_uploads", self.instance.allow_uploads if self.instance else False
         )
+        repository = data.get("repository", self.instance.repository if self.instance else None)
         if remote and allow_uploads:
             raise serializers.ValidationError(
                 _(
@@ -268,6 +269,16 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
                     "Use separate distributions for pull-through caching and publishing."
                 )
             )
+        if repository:
+            repo = repository.cast()
+            if allow_uploads and repo.repo_type != "private":
+                raise serializers.ValidationError(
+                    _("allow_uploads requires a repository with type 'private'.")
+                )
+            if remote and repo.repo_type != "cache":
+                raise serializers.ValidationError(
+                    _("A remote requires a repository with type 'cache'.")
+                )
         return data
 
     class Meta:

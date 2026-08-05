@@ -81,6 +81,8 @@ def rust_repo_factory(rust_repo_api_client, gen_object_with_cleanup):
 
     def _rust_repo_factory(**kwargs):
         kwargs.setdefault("name", str(uuid.uuid4()))
+        if "repo_type" not in kwargs:
+            kwargs["repo_type"] = "cache" if "remote" in kwargs else "private"
         return gen_object_with_cleanup(rust_repo_api_client, kwargs)
 
     yield _rust_repo_factory

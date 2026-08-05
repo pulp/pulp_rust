@@ -31,7 +31,7 @@ Repositories store and organize content in Pulp. When using pull-through caching
 automatically added to the repository as they are downloaded.
 
 ```bash
-pulp rust repository create --name crates-io-cache --remote crates-io --retain-repo-versions 1
+pulp rust repository create --name crates-io-cache --repo-type cache --remote crates-io --retain-repo-versions 1
 ```
 
 !!! tip
