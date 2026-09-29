@@ -1,5 +1,7 @@
 """Tests for Cargo token authentication on Cargo API endpoints."""
 
+import base64
+import uuid
 from urllib.parse import urljoin
 
 from pulp_rust.tests.functional.utils import (
@@ -267,3 +269,70 @@ def test_yank_requires_distribution_permission(
     # Now Alice can yank
     response = cargo_yank(base_url, "itoa", "1.0.0", headers=headers)
     assert response.status_code == 200
+
+
+# --- Non-Cargo-token authenticators (the instance's default auth stack) ---
+
+
+def test_me_with_basic_auth_succeeds(
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    gen_user,
+):
+    """A non-Cargo credential (HTTP Basic) must authenticate too.
+
+    The Cargo endpoints prepend the Cargo token to the instance's configured
+    authenticators instead of replacing them, so any deployment auth reaches them.
+    """
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(repository=repository.pulp_href)
+    base = cargo_registry_url(distribution.base_path)
+
+    user = gen_user()
+    creds = base64.b64encode(f"{user.username}:{user.password}".encode()).decode()
+
+    response = cargo_api_request(
+        "GET", urljoin(base, "me"), headers={"Authorization": f"Basic {creds}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+# --- config.json auth-required reflects the content guard ---
+
+
+def test_config_json_auth_required_false_without_guard(
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+):
+    """An unguarded distribution advertises auth-required: false."""
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(repository=repository.pulp_href)
+    config_url = urljoin(cargo_registry_url(distribution.base_path), "config.json")
+
+    response = cargo_api_request("GET", config_url)
+    assert response.json()["auth-required"] is False
+
+
+def test_config_json_auth_required_true_with_guard(
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    pulpcore_bindings,
+    gen_object_with_cleanup,
+):
+    """A guarded distribution advertises auth-required: true, so cargo sends its
+    credentials on the index and downloads, not only on the write API."""
+    guard = gen_object_with_cleanup(
+        pulpcore_bindings.ContentguardsRbacApi, {"name": str(uuid.uuid4())}
+    )
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(
+        repository=repository.pulp_href, content_guard=guard.pulp_href
+    )
+    config_url = urljoin(cargo_registry_url(distribution.base_path), "config.json")
+
+    response = cargo_api_request("GET", config_url)
+    assert response.json()["auth-required"] is True
