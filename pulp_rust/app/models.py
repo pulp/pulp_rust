@@ -4,6 +4,8 @@ from logging import getLogger
 
 from django.conf import settings
 from django.db import models
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from django_lifecycle import AFTER_CREATE, hook
 
 from pulpcore.plugin.models import (
@@ -359,6 +361,9 @@ class RustDistribution(Distribution, AutoAddObjPermsMixin):
         ]
 
 
+CARGO_TOKEN_ACTIONS = ("publish-new", "publish-update", "yank")
+
+
 class RustCargoToken(BaseModel):
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="cargo_tokens"
@@ -366,6 +371,24 @@ class RustCargoToken(BaseModel):
     name = models.CharField(max_length=255, blank=False, null=False)
     token_hash = models.CharField(max_length=64, unique=True, db_index=True)
     last_used = models.DateTimeField(null=True, blank=True)
+    distributions = models.ManyToManyField(
+        RustDistribution, blank=True, related_name="cargo_tokens"
+    )
+    actions = models.JSONField(default=list, blank=True)
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"
+
+
+@receiver(pre_delete, sender=RustDistribution)
+def revoke_emptied_cargo_tokens(instance, **kwargs):
+    """An emptied scope reads as unrestricted, so revoke rather than let the token widen."""
+    # Counted off a pk filter rather than off instance.cargo_tokens, because annotating over a
+    # relation already filtered on would only count this distribution.
+    scoped = list(instance.cargo_tokens.values_list("pk", flat=True))
+    emptied = (
+        RustCargoToken.objects.filter(pk__in=scoped)
+        .annotate(scope=models.Count("distributions"))
+        .filter(scope=1)
+    )
+    RustCargoToken.objects.filter(pk__in=list(emptied.values_list("pk", flat=True))).delete()
