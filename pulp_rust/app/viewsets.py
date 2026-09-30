@@ -97,9 +97,18 @@ class CargoTokenViewSet(NamedModelViewSet, CreateModelMixin, ListModelMixin, Des
     DEFAULT_ACCESS_POLICY = {
         "statements": [
             {
-                "action": ["create", "list", "retrieve", "destroy"],
+                "action": ["list", "retrieve", "destroy"],
                 "principal": "authenticated",
                 "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_distributions_param_model_or_domain_or_obj_perms:"
+                    "rust.view_rustdistribution",
+                ],
             },
         ],
     }
