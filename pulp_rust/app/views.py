@@ -80,6 +80,22 @@ def repository_write_error(distro):
     return cargo_error("No repository associated with this distribution", status=404)
 
 
+def token_scope_error(token, action, distro):
+    """Return a Cargo error response if the token's scopes forbid the action, else None.
+
+    Scopes only narrow what a token can do, so this runs in addition to the RBAC check
+    rather than in place of it. An empty scope means the token is not narrowed at all.
+    """
+    if token.actions and action not in token.actions:
+        return cargo_error(f"this token is not scoped for the {action} action", status=403)
+
+    scoped_distributions = set(token.distributions.values_list("pk", flat=True))
+    if scoped_distributions and distro.pk not in scoped_distributions:
+        return cargo_error("this token is not scoped for this distribution", status=403)
+
+    return None
+
+
 class PlainTextRenderer(BaseRenderer):
     """Renderer for text/plain responses (Cargo sends Accept: text/plain)."""
 
@@ -359,6 +375,9 @@ class CargoPublishApiView(APIView):
         if not request.user.has_perm("rust.publish_rustdistribution", distro):
             return cargo_error("insufficient permissions", status=403)
 
+        if error := token_scope_error(request.auth, "publish", distro):
+            return error
+
         if not distro.allow_uploads:
             return cargo_error("this registry does not allow uploads", status=403)
 
@@ -490,6 +509,8 @@ class CargoDownloadApiView(APIView):
         distro = self.get_distribution()
         if not request.user.has_perm("rust.yank_rustdistribution", distro):
             return cargo_error("insufficient permissions", status=403)
+        if error := token_scope_error(request.auth, "yank", distro):
+            return error
         if error := repository_write_error(distro):
             return error
 
@@ -532,6 +553,8 @@ class CargoDownloadApiView(APIView):
         distro = self.get_distribution()
         if not request.user.has_perm("rust.yank_rustdistribution", distro):
             return cargo_error("insufficient permissions", status=403)
+        if error := token_scope_error(request.auth, "yank", distro):
+            return error
         if error := repository_write_error(distro):
             return error
 

@@ -37,6 +37,36 @@ token = "crg_..."
 Cargo sends the token automatically on state-changing operations (publish, yank, unyank).
 Read-only operations (downloading crates, browsing the index) do not require a token.
 
+### Scoping a Token
+
+A token can be restricted to a subset of what you are allowed to do, which is useful when
+handing one out to CI. Pass `distributions`, `actions`, or both when creating it:
+
+```bash
+http POST http://<pulp-host>/pulp/api/v3/cargo/tokens/ \
+    -a alice:password \
+    name="ci-publish-only" \
+    distributions:='["/pulp/api/v3/distributions/rust/rust/<uuid>/"]' \
+    actions:='["publish"]'
+```
+
+The available actions are `publish` and `yank`, where `yank` covers both yanking and
+unyanking. Leaving either field out means the token is not restricted on that axis: an
+empty `distributions` allows every distribution you have access to, and an empty `actions`
+allows every action.
+
+Scopes only ever narrow access. A token cannot do anything its owner's roles do not already
+permit, and you can only scope a token to distributions you can already view -- naming one you
+have no access to is rejected.
+
+Scopes are fixed when the token is created. To change them, revoke the token and create a
+new one.
+
+Deleting a distribution removes it from the scope of every token that referenced it. A token
+scoped to several distributions stays valid for the ones that remain, but a token that loses
+its last scoped distribution is revoked -- an empty scope means unrestricted, so leaving it in
+place would widen the token instead of narrowing it.
+
 ### Managing Tokens
 
 ```bash
@@ -85,7 +115,7 @@ Alice can now publish and yank crates on that distribution using her Cargo token
 | Owner management | `cargo owner --add` | Pulp REST API role assignment |
 | Token creation | Web UI at crates.io | Pulp REST API |
 | Per-crate ownership | Yes (user and team owners) | Not supported (planned) |
-| Token scoping | Scoped to endpoints/crates | Not yet supported |
+| Token scoping | Scoped to endpoints/crates | Scoped to distributions/actions |
 
 !!! warning "No per-crate ownership"
     Pulp Rust currently controls access at the distribution level, not per-crate. Any user with

@@ -318,6 +318,21 @@ class CargoTokenSerializer(core_serializers.ModelSerializer):
         read_only=True,
         help_text=_("The token value. Shown once at creation, null otherwise."),
     )
+    distributions = core_serializers.DetailRelatedField(
+        many=True,
+        required=False,
+        view_name_pattern=r"distributions(-.*/.*)-detail",
+        queryset=models.RustDistribution.objects.all(),
+        help_text=_(
+            "Restrict this token to these distributions. Leave empty to allow every "
+            "distribution the user has access to."
+        ),
+    )
+    actions = serializers.ListField(
+        required=False,
+        child=serializers.ChoiceField(choices=models.CARGO_TOKEN_ACTIONS),
+        help_text=_("Restrict this token to these actions. Leave empty to allow every action."),
+    )
 
     class Meta:
         model = models.RustCargoToken
@@ -325,6 +340,8 @@ class CargoTokenSerializer(core_serializers.ModelSerializer):
             "name",
             "token",
             "last_used",
+            "distributions",
+            "actions",
         )
         read_only_fields = ("token", "last_used")
 
