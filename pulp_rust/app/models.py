@@ -4,7 +4,7 @@ from logging import getLogger
 
 from django.conf import settings
 from django.db import models
-from django.db.models.signals import post_delete, pre_delete
+from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 from django_lifecycle import AFTER_CREATE, hook
 
@@ -361,7 +361,7 @@ class RustDistribution(Distribution, AutoAddObjPermsMixin):
         ]
 
 
-CARGO_TOKEN_ACTIONS = ("publish", "yank")
+CARGO_TOKEN_ACTIONS = ("publish-new", "publish-update", "yank")
 
 
 class RustCargoToken(BaseModel):
@@ -381,20 +381,14 @@ class RustCargoToken(BaseModel):
 
 
 @receiver(pre_delete, sender=RustDistribution)
-def remember_scoped_cargo_tokens(instance, **kwargs):
-    """Record the tokens scoped to this distribution before the m2m rows are cascaded away."""
-    instance._scoped_cargo_token_pks = list(instance.cargo_tokens.values_list("pk", flat=True))
-
-
-@receiver(post_delete, sender=RustDistribution)
 def revoke_emptied_cargo_tokens(instance, **kwargs):
-    """Revoke tokens whose distribution scope was emptied by this deletion.
-
-    An empty scope means unrestricted, so a token that loses its last distribution would
-    silently widen to everything its owner can reach. Revoking it keeps the deletion from
-    granting the bearer reach the owner never delegated.
-    """
-    token_pks = getattr(instance, "_scoped_cargo_token_pks", None)
-    if not token_pks:
-        return
-    RustCargoToken.objects.filter(pk__in=token_pks, distributions__isnull=True).delete()
+    """An emptied scope reads as unrestricted, so revoke rather than let the token widen."""
+    # Counted off a pk filter rather than off instance.cargo_tokens, because annotating over a
+    # relation already filtered on would only count this distribution.
+    scoped = list(instance.cargo_tokens.values_list("pk", flat=True))
+    emptied = (
+        RustCargoToken.objects.filter(pk__in=scoped)
+        .annotate(scope=models.Count("distributions"))
+        .filter(scope=1)
+    )
+    RustCargoToken.objects.filter(pk__in=list(emptied.values_list("pk", flat=True))).delete()

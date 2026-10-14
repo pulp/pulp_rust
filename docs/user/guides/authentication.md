@@ -47,13 +47,17 @@ http POST http://<pulp-host>/pulp/api/v3/cargo/tokens/ \
     -a alice:password \
     name="ci-publish-only" \
     distributions:='["/pulp/api/v3/distributions/rust/rust/<uuid>/"]' \
-    actions:='["publish"]'
+    actions:='["publish-new", "publish-update"]'
 ```
 
-The available actions are `publish` and `yank`, where `yank` covers both yanking and
-unyanking. Leaving either field out means the token is not restricted on that axis: an
-empty `distributions` allows every distribution you have access to, and an empty `actions`
-allows every action.
+The available actions follow crates.io: `publish-new` (uploading a crate name the
+distribution's repository does not have yet), `publish-update` (uploading another version of
+a crate it already has), and `yank` (which covers both yanking and unyanking). crates.io's
+`change-owners` has no equivalent here because Pulp Rust has no per-crate ownership.
+
+Leaving either field out means the token is not restricted on that axis: an empty
+`distributions` allows every distribution you have access to, and an empty `actions` allows
+every action.
 
 Scopes only ever narrow access. A token cannot do anything its owner's roles do not already
 permit, and you can only scope a token to distributions you can already view -- naming one you

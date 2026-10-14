@@ -375,9 +375,6 @@ class CargoPublishApiView(APIView):
         if not request.user.has_perm("rust.publish_rustdistribution", distro):
             return cargo_error("insufficient permissions", status=403)
 
-        if error := token_scope_error(request.auth, "publish", distro):
-            return error
-
         if not distro.allow_uploads:
             return cargo_error("this registry does not allow uploads", status=403)
 
@@ -409,10 +406,13 @@ class CargoPublishApiView(APIView):
         canonical = canonicalize_crate_name(name)
         vers_base = strip_semver_build_metadata(vers)
         repo_version = distro.repository.latest_version()
-        if RustContent.objects.filter(
-            pk__in=repo_version.content, canonical_name=canonical, vers=vers_base
-        ).exists():
+        existing = RustContent.objects.filter(pk__in=repo_version.content, canonical_name=canonical)
+        if existing.filter(vers=vers_base).exists():
             return cargo_error(f"crate version `{name}@{vers}` is already uploaded")
+
+        action = "publish-update" if existing.exists() else "publish-new"
+        if error := token_scope_error(request.auth, action, distro):
+            return error
 
         # Write the .crate bytes to a temp file — raw bytes can't be passed
         # through dispatch() because task kwargs are stored as JSON.

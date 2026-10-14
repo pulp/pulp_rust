@@ -28,7 +28,7 @@ def test_publish_scoped_token_cannot_yank(
     populated_repo,
 ):
     """A token scoped to publish should be rejected on yank."""
-    token = rust_token_factory(pulp_admin_user, actions=["publish"])
+    token = rust_token_factory(pulp_admin_user, actions=["publish-new", "publish-update"])
     headers = {"Authorization": token.token}
     base_url = populated_repo["base_url"]
 
@@ -56,7 +56,60 @@ def test_yank_scoped_token_cannot_publish(
     response = minimal_publish_request(base, headers=headers)
     assert response.status_code == 403
     errors = response.json()["errors"]
-    assert any("not scoped for the publish action" in e["detail"] for e in errors)
+    assert any("not scoped for the publish-new action" in e["detail"] for e in errors)
+
+
+@pytest.fixture
+def populated_upload_repo(
+    populated_repo, rust_repo_api_client, rust_distro_api_client, monitor_task
+):
+    """The populated repo (itoa 1.0.0/1.0.1) with uploads turned on.
+
+    A repository keeps its caching remote, which is rejected alongside allow_uploads, so the
+    remote has to go before the flag can be set.
+    """
+    repo_href = populated_repo["repository"].pulp_href
+    monitor_task(rust_repo_api_client.partial_update(repo_href, {"remote": None}).task)
+    distro_href = populated_repo["distribution"].pulp_href
+    monitor_task(rust_distro_api_client.partial_update(distro_href, {"allow_uploads": True}).task)
+    return populated_repo
+
+
+def test_publish_new_scope_rejects_a_crate_the_repo_already_has(
+    rust_token_factory,
+    pulp_admin_user,
+    populated_upload_repo,
+):
+    """Adding a version to a crate already in the repo is publish-update, not publish-new."""
+    token = rust_token_factory(pulp_admin_user, actions=["publish-new"])
+
+    response = minimal_publish_request(
+        populated_upload_repo["base_url"],
+        headers={"Authorization": token.token},
+        name="itoa",
+        vers="9.9.9",
+    )
+    assert response.status_code == 403
+    errors = response.json()["errors"]
+    assert any("not scoped for the publish-update action" in e["detail"] for e in errors)
+
+
+def test_publish_update_scope_rejects_an_unknown_crate(
+    rust_token_factory,
+    pulp_admin_user,
+    populated_upload_repo,
+):
+    """A crate name the repo has never seen is publish-new, not publish-update."""
+    token = rust_token_factory(pulp_admin_user, actions=["publish-update"])
+
+    response = minimal_publish_request(
+        populated_upload_repo["base_url"],
+        headers={"Authorization": token.token},
+        name="never-seen-here",
+    )
+    assert response.status_code == 403
+    errors = response.json()["errors"]
+    assert any("not scoped for the publish-new action" in e["detail"] for e in errors)
 
 
 def test_yank_scoped_token_can_yank_and_unyank(
@@ -214,11 +267,11 @@ def test_scopes_are_readable_on_the_token(
     """Scopes set at creation should come back on the token."""
     distribution = rust_distribution_factory(repository=rust_repo_factory().pulp_href)
     token = rust_token_factory(
-        pulp_admin_user, distributions=[distribution.pulp_href], actions=["publish"]
+        pulp_admin_user, distributions=[distribution.pulp_href], actions=["publish-new"]
     )
 
     assert token.distributions == [distribution.pulp_href]
-    assert token.actions == ["publish"]
+    assert token.actions == ["publish-new"]
 
 
 # --- Scopes narrow, they never grant ---
