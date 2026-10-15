@@ -192,6 +192,24 @@ class RustContentSerializer(core_serializers.SingleArtifactContentSerializer):
         model = models.RustContent
 
 
+class RustPackageYankSerializer(core_serializers.NoArtifactContentSerializer):
+    """
+    Read-only serializer for RustPackageYank marker content type.
+
+    Used by RustPackageYankViewSet to expose yank markers via the Pulp REST API.
+    """
+
+    name = serializers.CharField(read_only=True)
+    vers = serializers.CharField(read_only=True)
+
+    class Meta:
+        fields = core_serializers.NoArtifactContentSerializer.Meta.fields + (
+            "name",
+            "vers",
+        )
+        model = models.RustPackageYank
+
+
 class RustRemoteSerializer(core_serializers.RemoteSerializer):
     """
     A Serializer for RustRemote.
