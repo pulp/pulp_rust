@@ -37,6 +37,9 @@ def _normalize_req(version_str):
     return f"^{version_str}"
 
 
+CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index"
+
+
 def parse_dep(name, spec, kind="normal", target=None):
     """Convert a single Cargo.toml dependency entry to index format."""
     if isinstance(spec, str):
@@ -49,7 +52,7 @@ def parse_dep(name, spec, kind="normal", target=None):
             "default_features": True,
             "target": target,
             "kind": kind,
-            "registry": None,
+            "registry": CRATES_IO_INDEX,
             "package": None,
         }
 
@@ -62,7 +65,7 @@ def parse_dep(name, spec, kind="normal", target=None):
         "default_features": spec.get("default-features", True),
         "target": target,
         "kind": kind,
-        "registry": spec.get("registry"),
+        "registry": spec.get("registry-index") or CRATES_IO_INDEX,
         "package": None,
     }
     # If the dep was renamed, "name" in the index is the alias (the key),
