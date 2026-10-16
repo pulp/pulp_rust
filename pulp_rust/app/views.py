@@ -306,12 +306,26 @@ class IndexRoot(ApiMixin, ViewSet):
         data = {
             "dl": self.base_download_url,
             "api": self.base_api_url,
-            "auth-required": False,
+            "auth-required": bool(self.distribution.content_guard_id),
         }
         return HttpResponse(json.dumps(data), content_type="application/json")
 
 
-class CargoMeApiView(APIView):
+class CargoAuthMixin:
+    """Authenticate the Cargo token first, then the deployment's configured authenticators.
+
+    Cargo endpoints must not shadow ``DEFAULT_AUTHENTICATION_CLASSES``: hardcoding only
+    ``CargoTokenAuthentication`` locks them to ``crg_`` tokens and rejects every other
+    credential the instance accepts (Basic, session, SSO, OIDC/workload identity).
+    Prepending the Cargo token keeps ``cargo login`` working while letting any configured
+    authenticator (e.g. a CI bearer token) reach the view.
+    """
+
+    def get_authenticators(self):
+        return [CargoTokenAuthentication(), *super().get_authenticators()]
+
+
+class CargoMeApiView(CargoAuthMixin, APIView):
     """
     Auth verification endpoint for ``cargo login``.
 
@@ -319,7 +333,6 @@ class CargoMeApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html
     """
 
-    authentication_classes = [CargoTokenAuthentication]
     permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
@@ -327,7 +340,7 @@ class CargoMeApiView(APIView):
         return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
 
-class CargoPublishApiView(APIView):
+class CargoPublishApiView(CargoAuthMixin, APIView):
     """
     View for Cargo's crate publish endpoint (PUT /api/v1/crates/new).
 
@@ -337,7 +350,6 @@ class CargoPublishApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish
     """
 
-    authentication_classes = [CargoTokenAuthentication]
     permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
@@ -430,12 +442,11 @@ class CargoPublishApiView(APIView):
         )
 
 
-class CargoDownloadApiView(APIView):
+class CargoDownloadApiView(CargoAuthMixin, APIView):
     """
     View for Cargo's crate download, readme, yank, and unyank endpoints.
     """
 
-    authentication_classes = [CargoTokenAuthentication]
     renderer_classes = [PlainTextRenderer, JSONRenderer]
 
     def get_permissions(self):
