@@ -80,6 +80,22 @@ def repository_write_error(distro):
     return cargo_error("No repository associated with this distribution", status=404)
 
 
+def token_scope_error(token, action, distro):
+    """Return a Cargo error response if the token's scopes forbid the action, else None.
+
+    Scopes only narrow what a token can do, so this runs in addition to the RBAC check
+    rather than in place of it. An empty scope means the token is not narrowed at all.
+    """
+    if token.actions and action not in token.actions:
+        return cargo_error(f"this token is not scoped for the {action} action", status=403)
+
+    scoped_distributions = set(token.distributions.values_list("pk", flat=True))
+    if scoped_distributions and distro.pk not in scoped_distributions:
+        return cargo_error("this token is not scoped for this distribution", status=403)
+
+    return None
+
+
 class PlainTextRenderer(BaseRenderer):
     """Renderer for text/plain responses (Cargo sends Accept: text/plain)."""
 
@@ -390,10 +406,13 @@ class CargoPublishApiView(APIView):
         canonical = canonicalize_crate_name(name)
         vers_base = strip_semver_build_metadata(vers)
         repo_version = distro.repository.latest_version()
-        if RustContent.objects.filter(
-            pk__in=repo_version.content, canonical_name=canonical, vers=vers_base
-        ).exists():
+        existing = RustContent.objects.filter(pk__in=repo_version.content, canonical_name=canonical)
+        if existing.filter(vers=vers_base).exists():
             return cargo_error(f"crate version `{name}@{vers}` is already uploaded")
+
+        action = "publish-update" if existing.exists() else "publish-new"
+        if error := token_scope_error(request.auth, action, distro):
+            return error
 
         # Write the .crate bytes to a temp file — raw bytes can't be passed
         # through dispatch() because task kwargs are stored as JSON.
@@ -490,6 +509,8 @@ class CargoDownloadApiView(APIView):
         distro = self.get_distribution()
         if not request.user.has_perm("rust.yank_rustdistribution", distro):
             return cargo_error("insufficient permissions", status=403)
+        if error := token_scope_error(request.auth, "yank", distro):
+            return error
         if error := repository_write_error(distro):
             return error
 
@@ -532,6 +553,8 @@ class CargoDownloadApiView(APIView):
         distro = self.get_distribution()
         if not request.user.has_perm("rust.yank_rustdistribution", distro):
             return cargo_error("insufficient permissions", status=403)
+        if error := token_scope_error(request.auth, "yank", distro):
+            return error
         if error := repository_write_error(distro):
             return error
 

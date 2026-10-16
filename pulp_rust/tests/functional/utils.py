@@ -106,13 +106,13 @@ def cargo_publish(url, metadata, crate_bytes, content_type=None, headers=None):
     )
 
 
-def minimal_publish_request(url, headers=None):
+def minimal_publish_request(url, headers=None, name="fake", vers="0.0.1"):
     """Send a minimal publish request to the Cargo publish endpoint.
 
     Builds a tiny fake crate body — useful for testing auth and validation
     without needing a real .crate file.
     """
-    metadata = {"name": "fake", "vers": "0.0.1", "deps": [], "features": {}}
+    metadata = {"name": name, "vers": vers, "deps": [], "features": {}}
     return cargo_api_request(
         "PUT",
         f"{url}api/v1/crates/new",
