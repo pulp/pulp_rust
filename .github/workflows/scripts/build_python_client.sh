@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # This script expects all <app_label>-api.json files to exist in the plugins root directory.
-# It produces a <app_label>-python-client.tar and <app_label>-python-client-docs.tar file in the plugins root directory.
+# It produces a <app_label>-python-client.tar file in the plugins root directory.
 
 # WARNING: DO NOT EDIT!
 #
@@ -21,34 +21,11 @@ rm -rf "pulp_rust-client"
 ./gen-client.sh "../pulp_rust/rust-api.json" "rust" python "pulp_rust"
 
 pushd pulp_rust-client
-python -m build
 
-twine check "dist/pulp_rust_client-"*"-py3-none-any.whl"
-twine check "dist/pulp_rust_client-"*".tar.gz"
-
+uv build
+uvx twine check "dist/pulp_rust_client-"*"-py3-none-any.whl"
+uvx twine check "dist/pulp_rust_client-"*".tar.gz"
 tar cvf "../../pulp_rust/rust-python-client.tar" ./dist
 
-find ./docs/* -exec sed -i 's/Back to README/Back to HOME/g' {} \;
-find ./docs/* -exec sed -i 's/README//g' {} \;
-cp README.md docs/index.md
-sed -i 's/docs\///g' docs/index.md
-find ./docs/* -exec sed -i 's/\.md//g' {} \;
-
-cat >> mkdocs.yml << DOCSYAML
----
-site_name: PulpRust Client
-site_description: Rust bindings
-site_author: Pulp Team
-site_url: https://docs.pulpproject.org/pulp_rust_client/
-repo_name: pulp/pulp_rust
-repo_url: https://github.com/pulp/pulp_rust
-theme: readthedocs
-DOCSYAML
-
-# Building the bindings docs
-mkdocs build
-
-# Pack the built site.
-tar cvf ../../pulp_rust/rust-python-client-docs.tar ./site
 popd
 popd

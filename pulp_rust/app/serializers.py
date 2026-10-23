@@ -192,6 +192,24 @@ class RustContentSerializer(core_serializers.SingleArtifactContentSerializer):
         model = models.RustContent
 
 
+class RustPackageYankSerializer(core_serializers.NoArtifactContentSerializer):
+    """
+    Read-only serializer for RustPackageYank marker content type.
+
+    Used by RustPackageYankViewSet to expose yank markers via the Pulp REST API.
+    """
+
+    name = serializers.CharField(read_only=True)
+    vers = serializers.CharField(read_only=True)
+
+    class Meta:
+        fields = core_serializers.NoArtifactContentSerializer.Meta.fields + (
+            "name",
+            "vers",
+        )
+        model = models.RustPackageYank
+
+
 class RustRemoteSerializer(core_serializers.RemoteSerializer):
     """
     A Serializer for RustRemote.
@@ -318,6 +336,21 @@ class CargoTokenSerializer(core_serializers.ModelSerializer):
         read_only=True,
         help_text=_("The token value. Shown once at creation, null otherwise."),
     )
+    distributions = core_serializers.DetailRelatedField(
+        many=True,
+        required=False,
+        view_name_pattern=r"distributions(-.*/.*)-detail",
+        queryset=models.RustDistribution.objects.all(),
+        help_text=_(
+            "Restrict this token to these distributions. Leave empty to allow every "
+            "distribution the user has access to."
+        ),
+    )
+    actions = serializers.ListField(
+        required=False,
+        child=serializers.ChoiceField(choices=models.CARGO_TOKEN_ACTIONS),
+        help_text=_("Restrict this token to these actions. Leave empty to allow every action."),
+    )
 
     class Meta:
         model = models.RustCargoToken
@@ -325,6 +358,8 @@ class CargoTokenSerializer(core_serializers.ModelSerializer):
             "name",
             "token",
             "last_used",
+            "distributions",
+            "actions",
         )
         read_only_fields = ("token", "last_used")
 
