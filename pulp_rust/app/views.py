@@ -27,6 +27,7 @@ from pulpcore.plugin.util import get_domain
 
 from pulp_rust.app.auth import CargoTokenAuthentication
 from pulp_rust.app.models import (
+    RustCargoToken,
     RustContent,
     RustDistribution,
     RustPackageYank,
@@ -86,6 +87,10 @@ def token_scope_error(token, action, distro):
     Scopes only narrow what a token can do, so this runs in addition to the RBAC check
     rather than in place of it. An empty scope means the token is not narrowed at all.
     """
+    if not isinstance(token, RustCargoToken):
+        # Credentials other than a Cargo token carry no scopes.
+        return None
+
     if token.actions and action not in token.actions:
         return cargo_error(f"this token is not scoped for the {action} action", status=403)
 
@@ -328,13 +333,10 @@ class IndexRoot(ApiMixin, ViewSet):
 
 
 class CargoAuthMixin:
-    """Authenticate the Cargo token first, then the deployment's configured authenticators.
+    """Try the Cargo token first, then the instance's default authentication classes.
 
-    Cargo endpoints must not shadow ``DEFAULT_AUTHENTICATION_CLASSES``: hardcoding only
-    ``CargoTokenAuthentication`` locks them to ``crg_`` tokens and rejects every other
-    credential the instance accepts (Basic, session, SSO, OIDC/workload identity).
-    Prepending the Cargo token keeps ``cargo login`` working while letting any configured
-    authenticator (e.g. a CI bearer token) reach the view.
+    This keeps `cargo login` tokens working while still accepting the other credentials
+    the deployment is configured for (e.g. HTTP Basic).
     """
 
     def get_authenticators(self):

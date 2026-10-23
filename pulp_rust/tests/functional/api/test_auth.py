@@ -299,6 +299,25 @@ def test_me_with_basic_auth_succeeds(
     assert response.json()["ok"] is True
 
 
+def test_yank_with_basic_auth_succeeds(
+    gen_user,
+    rust_distro_api_client,
+    populated_repo,
+):
+    """Token scopes only apply to Cargo tokens, so a Basic-authenticated yank goes through."""
+    alice = gen_user()
+    rust_distro_api_client.add_role(
+        populated_repo["distribution"].pulp_href,
+        {"role": "rust.rustdistribution_publisher", "users": [alice.username]},
+    )
+    creds = base64.b64encode(f"{alice.username}:{alice.password}".encode()).decode()
+
+    response = cargo_yank(
+        populated_repo["base_url"], "itoa", "1.0.0", headers={"Authorization": f"Basic {creds}"}
+    )
+    assert response.status_code == 200
+
+
 # --- config.json auth-required reflects the content guard ---
 
 
