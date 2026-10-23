@@ -11,6 +11,7 @@ django.setup()
 
 from pulp_rust.app.utils import (  # noqa: E402
     CRATES_IO_INDEX,
+    UnsupportedDependencyError,
     canonicalize_crate_name,
     extract_cargo_toml,
     extract_dependencies,
@@ -87,9 +88,17 @@ class TestParseDep:
         result = parse_dep("foo", {"version": "1.0", "registry-index": "https://r.example/"})
         assert result["registry"] == "https://r.example/"
 
-    def test_table_spec_registry_name_is_ignored(self):
-        result = parse_dep("foo", {"version": "1.0", "registry": "my-named-registry"})
-        assert result["registry"] == CRATES_IO_INDEX
+    def test_table_spec_registry_name_is_rejected(self):
+        with pytest.raises(UnsupportedDependencyError, match="my-named-registry"):
+            parse_dep("foo", {"version": "1.0", "registry": "my-named-registry"})
+
+    def test_table_spec_registry_name_with_index_is_accepted(self):
+        spec = {
+            "version": "1.0",
+            "registry": "my-named-registry",
+            "registry-index": "https://r.example/",
+        }
+        assert parse_dep("foo", spec)["registry"] == "https://r.example/"
 
     def test_table_spec_no_version_defaults_to_star(self):
         result = parse_dep("foo", {"optional": True})

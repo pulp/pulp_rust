@@ -10,12 +10,15 @@ catch it.  Other test modules (auth, yank) also depend on the same helpers,
 so keep these fidelity checks passing.
 """
 
+import io
+import tarfile
 from urllib.parse import urljoin
 
 import pytest
 
 from pulp_rust.tests.functional.utils import (
     CRATES_IO_URL,
+    as_alternate_registry_entry,
     assert_index_entry_matches_upstream,
     build_publish_metadata,
     cargo_publish,
@@ -61,7 +64,9 @@ def test_cargo_publish_and_index_fidelity(
 
     # Fetch the index from Pulp and compare against crates.io
     pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
-    assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)
+    assert_index_entry_matches_upstream(
+        pulp_entry, as_alternate_registry_entry(upstream_index_entry)
+    )
 
 
 def test_cargo_publish_duplicate_rejected(
@@ -142,7 +147,9 @@ def test_cargo_publish_ignores_tampered_json_metadata(
 
     # The index entry should match crates.io (i.e. the Cargo.toml), not the tampered JSON
     pulp_entry = get_index_entry(base, "se/rd/serde", "1.0.210")
-    assert_index_entry_matches_upstream(pulp_entry, upstream_index_entry)
+    assert_index_entry_matches_upstream(
+        pulp_entry, as_alternate_registry_entry(upstream_index_entry)
+    )
 
 
 def test_cargo_publish_octet_stream_content_type(
@@ -196,6 +203,33 @@ def test_cargo_publish_uploads_disabled(
     assert response.status_code == 403
     errors = response.json()["errors"]
     assert any("does not allow uploads" in e["detail"] for e in errors)
+
+
+def test_cargo_publish_named_registry_dependency_rejected(
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    admin_auth_headers,
+):
+    """A dependency naming a registry without its index URL cannot be resolved by Pulp."""
+    cargo_toml = (
+        b'[package]\nname = "named-dep"\nversion = "0.1.0"\n\n'
+        b'[dependencies]\nfoo = { version = "1.0", registry = "my-named-registry" }\n'
+    )
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(name="named-dep-0.1.0/Cargo.toml")
+        info.size = len(cargo_toml)
+        tar.addfile(info, io.BytesIO(cargo_toml))
+
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
+    base = cargo_registry_url(distribution.base_path)
+
+    metadata = {"name": "named-dep", "vers": "0.1.0", "deps": [], "features": {}}
+    response = cargo_publish(base, metadata, buf.getvalue(), headers=admin_auth_headers)
+    assert response.status_code == 400
+    assert "my-named-registry" in response.json()["errors"][0]["detail"]
 
 
 def test_cargo_publish_invalid_name_rejected(

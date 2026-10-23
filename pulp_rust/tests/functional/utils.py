@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import aiohttp
 import requests
 
-from pulp_rust.app.utils import extract_cargo_toml, extract_dependencies
+from pulp_rust.app.utils import CRATES_IO_INDEX, extract_cargo_toml, extract_dependencies
 
 CRATES_IO_URL = "sparse+https://index.crates.io/"
 CRATES_IO_DOWNLOAD_URL = "https://static.crates.io/crates/"
@@ -219,6 +219,19 @@ def download_crate_from_upstream(name, version):
 
 
 # --- Assertion helpers ---
+
+
+def as_alternate_registry_entry(upstream_entry):
+    """Return a crates.io index entry as an alternate registry must serve it.
+
+    crates.io omits `registry` on dependencies from itself. Any other registry has to name the
+    crates.io index explicitly, or Cargo resolves them against that registry instead.
+    """
+    deps = [
+        {**dep, "registry": dep.get("registry") or CRATES_IO_INDEX}
+        for dep in upstream_entry["deps"]
+    ]
+    return {**upstream_entry, "deps": deps}
 
 
 def assert_index_entry_matches_upstream(pulp_entry, upstream_entry):
