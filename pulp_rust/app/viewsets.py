@@ -75,6 +75,30 @@ class RustContentViewSet(core.ReadOnlyContentViewSet):
     }
 
 
+class RustPackageYankViewSet(core.ReadOnlyContentViewSet):
+    """
+    Read-only viewset for RustPackageYank marker content type.
+    RustPackageYank markers indicate that a crate version has been yanked in a repository.
+    Use the Cargo DELETE api/v1/crates/{name}/{version}/yank and
+    PUT api/v1/crates/{name}/{version}/unyank endpoints to create or remove these markers.
+    """
+
+    endpoint_name = "yanks"
+    queryset = models.RustPackageYank.objects.all()
+    serializer_class = serializers.RustPackageYankSerializer
+
+    DEFAULT_ACCESS_POLICY = {
+        "statements": [
+            {
+                "action": ["list", "retrieve"],
+                "principal": "authenticated",
+                "effect": "allow",
+            },
+        ],
+        "queryset_scoping": {"function": "scope_queryset"},
+    }
+
+
 class RustRemoteFilter(RemoteFilter):
     """
     A FilterSet for RustRemote.
@@ -97,9 +121,18 @@ class CargoTokenViewSet(NamedModelViewSet, CreateModelMixin, ListModelMixin, Des
     DEFAULT_ACCESS_POLICY = {
         "statements": [
             {
-                "action": ["create", "list", "retrieve", "destroy"],
+                "action": ["list", "retrieve", "destroy"],
                 "principal": "authenticated",
                 "effect": "allow",
+            },
+            {
+                "action": ["create"],
+                "principal": "authenticated",
+                "effect": "allow",
+                "condition": [
+                    "has_distributions_param_model_or_domain_or_obj_perms:"
+                    "rust.view_rustdistribution",
+                ],
             },
         ],
     }
