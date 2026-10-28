@@ -1,7 +1,9 @@
+import io
 import json
 import logging
 import os
 import struct
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -43,7 +45,10 @@ from pulp_rust.app.tasks import (
     parse_cargo_publish_body,
 )
 from pulp_rust.app.utils import (
+    UnsupportedDependencyError,
     canonicalize_crate_name,
+    extract_cargo_toml,
+    extract_dependencies,
     strip_semver_build_metadata,
     validate_crate_name,
     validate_crate_version,
@@ -413,6 +418,13 @@ class CargoPublishApiView(APIView):
         action = "publish-update" if existing.exists() else "publish-new"
         if error := token_scope_error(request.auth, action, distro):
             return error
+
+        try:
+            extract_dependencies(extract_cargo_toml(io.BytesIO(crate_bytes), name, vers))
+        except UnsupportedDependencyError as e:
+            return cargo_error(str(e))
+        except (tarfile.TarError, EOFError, KeyError, FileNotFoundError, ValueError):
+            return cargo_error("invalid crate file")
 
         # Write the .crate bytes to a temp file — raw bytes can't be passed
         # through dispatch() because task kwargs are stored as JSON.

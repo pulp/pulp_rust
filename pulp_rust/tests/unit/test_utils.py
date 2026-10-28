@@ -10,6 +10,8 @@ import pytest
 django.setup()
 
 from pulp_rust.app.utils import (  # noqa: E402
+    CRATES_IO_INDEX,
+    UnsupportedDependencyError,
     canonicalize_crate_name,
     extract_cargo_toml,
     extract_dependencies,
@@ -44,7 +46,7 @@ class TestParseDep:
             "default_features": True,
             "target": None,
             "kind": "normal",
-            "registry": None,
+            "registry": CRATES_IO_INDEX,
             "package": None,
         }
 
@@ -63,7 +65,7 @@ class TestParseDep:
             "features": ["derive", "std"],
             "optional": True,
             "default-features": False,
-            "registry": "https://my-registry.example.com/",
+            "registry-index": "https://my-registry.example.com/",
             "package": "serde_real",
         }
         result = parse_dep("my_serde", spec)
@@ -74,6 +76,29 @@ class TestParseDep:
         assert result["default_features"] is False
         assert result["registry"] == "https://my-registry.example.com/"
         assert result["package"] == "serde_real"
+
+    def test_string_spec_registry_is_crates_io(self):
+        assert parse_dep("serde", "1.0")["registry"] == CRATES_IO_INDEX
+
+    def test_table_spec_without_registry_defaults_to_crates_io(self):
+        result = parse_dep("serde", {"version": "1.0"})
+        assert result["registry"] == CRATES_IO_INDEX
+
+    def test_table_spec_registry_index_preserved(self):
+        result = parse_dep("foo", {"version": "1.0", "registry-index": "https://r.example/"})
+        assert result["registry"] == "https://r.example/"
+
+    def test_table_spec_registry_name_is_rejected(self):
+        with pytest.raises(UnsupportedDependencyError, match="my-named-registry"):
+            parse_dep("foo", {"version": "1.0", "registry": "my-named-registry"})
+
+    def test_table_spec_registry_name_with_index_is_accepted(self):
+        spec = {
+            "version": "1.0",
+            "registry": "my-named-registry",
+            "registry-index": "https://r.example/",
+        }
+        assert parse_dep("foo", spec)["registry"] == "https://r.example/"
 
     def test_table_spec_no_version_defaults_to_star(self):
         result = parse_dep("foo", {"optional": True})
