@@ -27,6 +27,7 @@ from pulpcore.plugin.util import get_domain
 
 from pulp_rust.app.auth import CargoTokenAuthentication
 from pulp_rust.app.models import (
+    RustCargoToken,
     RustContent,
     RustDistribution,
     RustPackageYank,
@@ -86,6 +87,10 @@ def token_scope_error(token, action, distro):
     Scopes only narrow what a token can do, so this runs in addition to the RBAC check
     rather than in place of it. An empty scope means the token is not narrowed at all.
     """
+    if not isinstance(token, RustCargoToken):
+        # Credentials other than a Cargo token carry no scopes.
+        return None
+
     if token.actions and action not in token.actions:
         return cargo_error(f"this token is not scoped for the {action} action", status=403)
 
@@ -322,12 +327,23 @@ class IndexRoot(ApiMixin, ViewSet):
         data = {
             "dl": self.base_download_url,
             "api": self.base_api_url,
-            "auth-required": False,
+            "auth-required": bool(self.distribution.content_guard_id),
         }
         return HttpResponse(json.dumps(data), content_type="application/json")
 
 
-class CargoMeApiView(APIView):
+class CargoAuthMixin:
+    """Try the Cargo token first, then the instance's default authentication classes.
+
+    This keeps `cargo login` tokens working while still accepting the other credentials
+    the deployment is configured for (e.g. HTTP Basic).
+    """
+
+    def get_authenticators(self):
+        return [CargoTokenAuthentication(), *super().get_authenticators()]
+
+
+class CargoMeApiView(CargoAuthMixin, APIView):
     """
     Auth verification endpoint for ``cargo login``.
 
@@ -335,7 +351,6 @@ class CargoMeApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html
     """
 
-    authentication_classes = [CargoTokenAuthentication]
     permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
@@ -343,7 +358,7 @@ class CargoMeApiView(APIView):
         return HttpResponse(json.dumps({"ok": True}), content_type="application/json")
 
 
-class CargoPublishApiView(APIView):
+class CargoPublishApiView(CargoAuthMixin, APIView):
     """
     View for Cargo's crate publish endpoint (PUT /api/v1/crates/new).
 
@@ -353,7 +368,6 @@ class CargoPublishApiView(APIView):
     See: https://doc.rust-lang.org/cargo/reference/registry-web-api.html#publish
     """
 
-    authentication_classes = [CargoTokenAuthentication]
     permission_classes = [IsAuthenticated]
     renderer_classes = [JSONRenderer]
 
@@ -449,12 +463,11 @@ class CargoPublishApiView(APIView):
         )
 
 
-class CargoDownloadApiView(APIView):
+class CargoDownloadApiView(CargoAuthMixin, APIView):
     """
     View for Cargo's crate download, readme, yank, and unyank endpoints.
     """
 
-    authentication_classes = [CargoTokenAuthentication]
     renderer_classes = [PlainTextRenderer, JSONRenderer]
 
     def get_permissions(self):
