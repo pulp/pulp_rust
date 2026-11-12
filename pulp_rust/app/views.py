@@ -1,9 +1,7 @@
-import io
 import json
 import logging
 import os
 import struct
-import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -45,10 +43,7 @@ from pulp_rust.app.tasks import (
     parse_cargo_publish_body,
 )
 from pulp_rust.app.utils import (
-    UnsupportedDependencyError,
     canonicalize_crate_name,
-    extract_cargo_toml,
-    extract_dependencies,
     strip_semver_build_metadata,
     validate_crate_name,
     validate_crate_version,
@@ -419,13 +414,6 @@ class CargoPublishApiView(APIView):
         if error := token_scope_error(request.auth, action, distro):
             return error
 
-        try:
-            extract_dependencies(extract_cargo_toml(io.BytesIO(crate_bytes), name, vers))
-        except UnsupportedDependencyError as e:
-            return cargo_error(str(e))
-        except (tarfile.TarError, EOFError, KeyError, FileNotFoundError, ValueError):
-            return cargo_error("invalid crate file")
-
         # Write the .crate bytes to a temp file — raw bytes can't be passed
         # through dispatch() because task kwargs are stored as JSON.
         tmp = tempfile.NamedTemporaryFile(suffix=".crate", delete=False)
@@ -443,7 +431,9 @@ class CargoPublishApiView(APIView):
                     "crate_path": tmp.name,
                 },
             )
-            has_task_completed(task)
+            result = has_task_completed(task)
+            if result and (error := result.get("cargo_error")):
+                return cargo_error(error)
         finally:
             os.unlink(tmp.name)
 
@@ -589,7 +579,7 @@ def has_task_completed(task):
     Verify whether an immediate task ran properly.
 
     Returns:
-        bool: True if the task ended successfully.
+        dict | None: The result returned by a completed task.
 
     Raises:
         Exception: If an error occured during the task's runtime.
@@ -597,8 +587,9 @@ def has_task_completed(task):
 
     """
     if task.state == "completed":
+        result = task.result
         task.delete()
-        return True
+        return result
     elif task.state == "canceled":
         raise Throttled()
     else:

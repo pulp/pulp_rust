@@ -205,6 +205,24 @@ def test_cargo_publish_uploads_disabled(
     assert any("does not allow uploads" in e["detail"] for e in errors)
 
 
+def test_cargo_publish_invalid_crate_file_rejected(
+    rust_repo_factory,
+    rust_distribution_factory,
+    cargo_registry_url,
+    admin_auth_headers,
+):
+    """An invalid crate file should produce Cargo's normal error response."""
+    repository = rust_repo_factory()
+    distribution = rust_distribution_factory(repository=repository.pulp_href, allow_uploads=True)
+    base = cargo_registry_url(distribution.base_path)
+
+    metadata = {"name": "invalid-crate", "vers": "0.1.0", "deps": [], "features": {}}
+    response = cargo_publish(base, metadata, b"not a crate", headers=admin_auth_headers)
+
+    assert response.status_code == 400
+    assert response.json()["errors"][0]["detail"] == "invalid crate file"
+
+
 def test_cargo_publish_named_registry_dependency_rejected(
     rust_repo_factory,
     rust_distribution_factory,

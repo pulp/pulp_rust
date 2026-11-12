@@ -1,5 +1,6 @@
 import hashlib
 import struct
+import tarfile
 
 from django.db import IntegrityError
 
@@ -8,6 +9,7 @@ from pulpcore.plugin.tasking import aadd_and_remove
 
 from pulp_rust.app.models import RustContent, RustDependency, RustRepository
 from pulp_rust.app.utils import (
+    UnsupportedDependencyError,
     canonicalize_crate_name,
     extract_cargo_toml,
     extract_dependencies,
@@ -60,6 +62,21 @@ async def apublish_package(repository_pk, metadata, crate_path):
         metadata: Parsed JSON metadata from the cargo publish request.
         crate_path: Filesystem path to the .crate tarball.
     """
+    # Extract authoritative metadata from the Cargo.toml inside the .crate tarball.
+    # The publish JSON metadata is NOT authoritative - a rogue client can send metadata
+    # that doesn't match the actual package. We only use the JSON name/vers to locate the
+    # Cargo.toml within the tarball, then extract everything from the Cargo.toml itself.
+    # See: https://github.com/rust-lang/cargo/issues/14492
+    #      https://github.com/rust-lang/crates.io/pull/7238
+    try:
+        with open(crate_path, "rb") as f:
+            cargo_toml = extract_cargo_toml(f, metadata["name"], metadata["vers"])
+        deps = extract_dependencies(cargo_toml)
+    except UnsupportedDependencyError as e:
+        return {"cargo_error": str(e)}
+    except (tarfile.TarError, EOFError, KeyError, FileNotFoundError, ValueError):
+        return {"cargo_error": "invalid crate file"}
+
     repository = await RustRepository.objects.aget(pk=repository_pk)
 
     # Create the artifact from the .crate file, or reuse an existing one
@@ -73,14 +90,6 @@ async def apublish_package(repository_pk, metadata, crate_path):
     except IntegrityError:
         artifact = await Artifact.objects.aget(sha256=cksum)
 
-    # Extract authoritative metadata from the Cargo.toml inside the .crate tarball.
-    # The publish JSON metadata is NOT authoritative - a rogue client can send metadata
-    # that doesn't match the actual package. We only use the JSON name/vers to locate the
-    # Cargo.toml within the tarball, then extract everything from the Cargo.toml itself.
-    # See: https://github.com/rust-lang/cargo/issues/14492
-    #      https://github.com/rust-lang/crates.io/pull/7238
-    with artifact.file.open("rb") as f:
-        cargo_toml = extract_cargo_toml(f, metadata["name"], metadata["vers"])
     package = cargo_toml.get("package", {})
 
     name = package["name"]
@@ -88,9 +97,6 @@ async def apublish_package(repository_pk, metadata, crate_path):
     # Strip build metadata - SemVer 2.0.0 treats versions differing only in
     # build metadata as identical, and the index must not contain duplicates.
     vers = strip_semver_build_metadata(package["version"])
-
-    # Build dependency list from the Cargo.toml (authoritative source)
-    deps = extract_dependencies(cargo_toml)
 
     # Reuse existing content if it already exists in the domain with the same
     # checksum (e.g. from a pull-through cache or another repository's publish).
