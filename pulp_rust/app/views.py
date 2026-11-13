@@ -431,7 +431,9 @@ class CargoPublishApiView(APIView):
                     "crate_path": tmp.name,
                 },
             )
-            has_task_completed(task)
+            result = has_task_completed(task)
+            if result and (error := result.get("cargo_error")):
+                return cargo_error(error)
         finally:
             os.unlink(tmp.name)
 
@@ -577,7 +579,7 @@ def has_task_completed(task):
     Verify whether an immediate task ran properly.
 
     Returns:
-        bool: True if the task ended successfully.
+        dict | None: The result returned by a completed task.
 
     Raises:
         Exception: If an error occured during the task's runtime.
@@ -585,8 +587,9 @@ def has_task_completed(task):
 
     """
     if task.state == "completed":
+        result = task.result
         task.delete()
-        return True
+        return result
     elif task.state == "canceled":
         raise Throttled()
     else:

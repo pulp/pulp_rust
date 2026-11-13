@@ -37,6 +37,20 @@ def _normalize_req(version_str):
     return f"^{version_str}"
 
 
+CRATES_IO_INDEX = "https://github.com/rust-lang/crates.io-index"
+
+
+class UnsupportedDependencyError(ValueError):
+    """A Cargo.toml dependency that cannot be translated to an index entry."""
+
+    def __init__(self, name, registry):
+        self.name = name
+        self.registry = registry
+        super().__init__(
+            f"dependency `{name}` names registry `{registry}` without a `registry-index` URL"
+        )
+
+
 def parse_dep(name, spec, kind="normal", target=None):
     """Convert a single Cargo.toml dependency entry to index format."""
     if isinstance(spec, str):
@@ -49,11 +63,16 @@ def parse_dep(name, spec, kind="normal", target=None):
             "default_features": True,
             "target": target,
             "kind": kind,
-            "registry": None,
+            "registry": CRATES_IO_INDEX,
             "package": None,
         }
 
     # Table form: dep = { version = "1.0", optional = true, ... }
+    if "registry" in spec and "registry-index" not in spec:
+        # `cargo package` rewrites a named registry to `registry-index`. A bare name can only
+        # be resolved with the client's configuration, so treating it as crates.io could
+        # point at the wrong crate.
+        raise UnsupportedDependencyError(name, spec["registry"])
     dep = {
         "name": name,
         "req": _normalize_req(spec.get("version", "*")),
@@ -62,7 +81,7 @@ def parse_dep(name, spec, kind="normal", target=None):
         "default_features": spec.get("default-features", True),
         "target": target,
         "kind": kind,
-        "registry": spec.get("registry"),
+        "registry": spec.get("registry-index") or CRATES_IO_INDEX,
         "package": None,
     }
     # If the dep was renamed, "name" in the index is the alias (the key),
