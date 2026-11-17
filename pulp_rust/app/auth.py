@@ -26,4 +26,4 @@ class CargoTokenAuthentication(BaseAuthentication):
         return (cargo_token.user, cargo_token)
 
     def authenticate_header(self, request):
-        return "CargoToken"
+        return "Cargo"

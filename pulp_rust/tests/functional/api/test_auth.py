@@ -3,6 +3,8 @@
 import base64
 from urllib.parse import urljoin
 
+import pytest
+
 from pulp_rust.tests.functional.utils import (
     cargo_api_request,
     cargo_unyank,
@@ -337,6 +339,8 @@ def test_config_json_auth_required_false_by_default(
 def test_config_json_auth_required_true_when_enabled(
     rust_repo_factory,
     rust_distribution_factory,
+    rust_token_factory,
+    pulp_admin_user,
     cargo_registry_url,
 ):
     """cargo_auth_required makes cargo send its credential on index and download requests."""
@@ -346,6 +350,100 @@ def test_config_json_auth_required_true_when_enabled(
     )
     assert distribution.cargo_auth_required is True
     config_url = urljoin(cargo_registry_url(distribution.base_path), "config.json")
+    headers = {"Authorization": rust_token_factory(pulp_admin_user).token}
 
-    response = cargo_api_request("GET", config_url)
+    response = cargo_api_request("GET", config_url, headers=headers)
     assert response.json()["auth-required"] is True
+
+
+# --- A distribution with cargo_auth_required rejects anonymous reads ---
+
+
+@pytest.fixture
+def private_repo(populated_repo, rust_distro_api_client, monitor_task):
+    """The populated repository, served by a distribution that requires authentication."""
+    distribution = populated_repo["distribution"]
+    monitor_task(
+        rust_distro_api_client.partial_update(
+            distribution.pulp_href, {"cargo_auth_required": True}
+        ).task
+    )
+    return populated_repo
+
+
+PRIVATE_READ_PATHS = ["config.json", "it/oa/itoa", "api/v1/crates/itoa/1.0.0/download"]
+
+
+@pytest.mark.parametrize("path", PRIVATE_READ_PATHS)
+def test_private_distribution_rejects_anonymous_reads(private_repo, path):
+    """Cargo retries with its credential when it gets a 401 with a Cargo challenge."""
+    response = cargo_api_request(
+        "GET", urljoin(private_repo["base_url"], path), allow_redirects=False
+    )
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Cargo"
+
+
+@pytest.mark.parametrize("path", PRIVATE_READ_PATHS)
+def test_private_distribution_requires_view_permission(private_repo, gen_user, path):
+    """An authenticated user without a role on the distribution cannot read it."""
+    user = gen_user()
+    creds = base64.b64encode(f"{user.username}:{user.password}".encode()).decode()
+
+    response = cargo_api_request(
+        "GET",
+        urljoin(private_repo["base_url"], path),
+        headers={"Authorization": f"Basic {creds}"},
+        allow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("path", PRIVATE_READ_PATHS)
+def test_private_distribution_allows_viewers(
+    private_repo, gen_user, rust_token_factory, rust_distro_api_client, path
+):
+    """A Cargo token of a user with the viewer role can read the index and download crates."""
+    user = gen_user()
+    rust_distro_api_client.add_role(
+        private_repo["distribution"].pulp_href,
+        {"role": "rust.rustdistribution_viewer", "users": [user.username]},
+    )
+    headers = {"Authorization": rust_token_factory(user).token}
+
+    response = cargo_api_request(
+        "GET", urljoin(private_repo["base_url"], path), headers=headers, allow_redirects=False
+    )
+    assert response.status_code in (200, 302)
+
+
+@pytest.mark.parametrize("path", PRIVATE_READ_PATHS)
+def test_private_distribution_honors_token_distribution_scope(
+    private_repo,
+    gen_user,
+    rust_repo_factory,
+    rust_distribution_factory,
+    rust_token_factory,
+    rust_distro_api_client,
+    path,
+):
+    """A token scoped to another distribution cannot read this one, even for a viewer."""
+    user = gen_user()
+    rust_distro_api_client.add_role(
+        private_repo["distribution"].pulp_href,
+        {"role": "rust.rustdistribution_viewer", "users": [user.username]},
+    )
+    other = rust_distribution_factory(repository=rust_repo_factory().pulp_href)
+    rust_distro_api_client.add_role(
+        other.pulp_href,
+        {"role": "rust.rustdistribution_viewer", "users": [user.username]},
+    )
+    token = rust_token_factory(user, distributions=[other.pulp_href])
+
+    response = cargo_api_request(
+        "GET",
+        urljoin(private_repo["base_url"], path),
+        headers={"Authorization": token.token},
+        allow_redirects=False,
+    )
+    assert response.status_code == 403
