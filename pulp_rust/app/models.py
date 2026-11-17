@@ -351,6 +351,7 @@ class RustDistribution(Distribution, AutoAddObjPermsMixin):
     TYPE = "rust"
 
     allow_uploads = models.BooleanField(default=False)
+    cargo_auth_required = models.BooleanField(default=False)
 
     class Meta:
         default_related_name = "%(app_label)s_%(model_name)s"

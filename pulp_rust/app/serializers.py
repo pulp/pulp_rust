@@ -265,6 +265,13 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
     allow_uploads = serializers.BooleanField(
         default=False, help_text=_("Allow packages to be uploaded to this index.")
     )
+    cargo_auth_required = serializers.BooleanField(
+        default=False,
+        help_text=_(
+            "Advertise `auth-required` in the index config, so that Cargo sends its credential "
+            "on index and download requests, not only on publish and yank."
+        ),
+    )
     remote = core_serializers.DetailRelatedField(
         required=False,
         help_text=_("Remote that can be used to fetch content when using pull-through caching."),
@@ -326,7 +333,11 @@ class RustDistributionSerializer(core_serializers.DistributionSerializer):
         return data
 
     class Meta:
-        fields = core_serializers.DistributionSerializer.Meta.fields + ("allow_uploads", "remote")
+        fields = core_serializers.DistributionSerializer.Meta.fields + (
+            "allow_uploads",
+            "cargo_auth_required",
+            "remote",
+        )
         model = models.RustDistribution
 
 
