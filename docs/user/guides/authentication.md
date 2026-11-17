@@ -37,6 +37,21 @@ token = "crg_..."
 Cargo sends the token automatically on state-changing operations (publish, yank, unyank).
 Read-only operations (downloading crates, browsing the index) do not require a token.
 
+### Sending Credentials on Every Request
+
+To make Cargo send its credential on index and download requests as well, enable
+`cargo_auth_required` on the distribution. Pulp then advertises `auth-required: true` in the
+index `config.json`:
+
+```bash
+http PATCH http://<pulp-host>/pulp/api/v3/distributions/rust/rust/<uuid>/ \
+    -a admin:password \
+    cargo_auth_required:=true
+```
+
+This setting only controls what Cargo sends; it does not restrict access by itself. To protect
+downloads, also attach a content guard that accepts the credential Cargo sends.
+
 ### Scoping a Token
 
 A token can be restricted to a subset of what you are allowed to do, which is useful when
