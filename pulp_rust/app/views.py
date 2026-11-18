@@ -16,7 +16,7 @@ from django.http.response import (
 from django.shortcuts import get_object_or_404, redirect
 from drf_spectacular.utils import extend_schema
 from dynaconf import settings
-from rest_framework.exceptions import Throttled
+from rest_framework.exceptions import NotAuthenticated, PermissionDenied, Throttled
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.views import APIView
@@ -26,6 +26,7 @@ from pulpcore.plugin.tasking import dispatch
 from pulpcore.plugin.util import get_domain
 
 from pulp_rust.app.auth import CargoTokenAuthentication
+from pulp_rust.app.global_access_conditions import can_read_distribution
 from pulp_rust.app.models import (
     RustCargoToken,
     RustContent,
@@ -111,6 +112,17 @@ class PlainTextRenderer(BaseRenderer):
         return data
 
 
+class CargoAuthMixin:
+    """Try the Cargo token first, then the instance's default authentication classes.
+
+    This keeps `cargo login` tokens working while still accepting the other credentials
+    the deployment is configured for (e.g. HTTP Basic).
+    """
+
+    def get_authenticators(self):
+        return [CargoTokenAuthentication(), *super().get_authenticators()]
+
+
 class ApiMixin:
     """Mixin to get index specific info."""
 
@@ -180,7 +192,7 @@ class ApiMixin:
         return f"pulp/cargo/{cls.endpoint_name}"
 
 
-class CargoIndexApiViewSet(ApiMixin, ViewSet):
+class CargoIndexApiViewSet(CargoAuthMixin, ApiMixin, ViewSet):
     """View for the Cargo JSON metadata endpoint."""
 
     endpoint_name = "api"
@@ -190,6 +202,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
                 "action": ["retrieve"],
                 "principal": "*",
                 "effect": "allow",
+                "condition": "can_read_index",
             },
         ],
     }
@@ -307,7 +320,7 @@ class CargoIndexApiViewSet(ApiMixin, ViewSet):
         return HttpResponse("\n".join(lines), content_type="text/plain")
 
 
-class IndexRoot(ApiMixin, ViewSet):
+class IndexRoot(CargoAuthMixin, ApiMixin, ViewSet):
     """View for base_url of distribution."""
 
     endpoint_name = "root"
@@ -317,6 +330,7 @@ class IndexRoot(ApiMixin, ViewSet):
                 "action": ["retrieve"],
                 "principal": "*",
                 "effect": "allow",
+                "condition": "can_read_index",
             },
         ],
     }
@@ -330,17 +344,6 @@ class IndexRoot(ApiMixin, ViewSet):
             "auth-required": self.distribution.cargo_auth_required,
         }
         return HttpResponse(json.dumps(data), content_type="application/json")
-
-
-class CargoAuthMixin:
-    """Try the Cargo token first, then the instance's default authentication classes.
-
-    This keeps `cargo login` tokens working while still accepting the other credentials
-    the deployment is configured for (e.g. HTTP Basic).
-    """
-
-    def get_authenticators(self):
-        return [CargoTokenAuthentication(), *super().get_authenticators()]
 
 
 class CargoMeApiView(CargoAuthMixin, APIView):
@@ -502,6 +505,10 @@ class CargoDownloadApiView(CargoAuthMixin, APIView):
         - api/v1/crates/{name}/{version}/readme - not yet implemented
         """
         distro = self.get_distribution()
+        if not can_read_distribution(request, distro):
+            if request.user.is_authenticated:
+                raise PermissionDenied()
+            raise NotAuthenticated()
 
         if rest == "download":
             relative_path = f"{name}/{name}-{version}.crate"
