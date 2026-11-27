@@ -1,6 +1,7 @@
 """Tests for Cargo token authentication on Cargo API endpoints."""
 
 import base64
+import uuid
 from urllib.parse import urljoin
 
 import pytest
@@ -447,3 +448,92 @@ def test_private_distribution_honors_token_distribution_scope(
         allow_redirects=False,
     )
     assert response.status_code == 403
+
+
+# --- A content redirect guard lets Cargo tokens download crates ---
+
+
+@pytest.fixture
+def redirect_guarded_repo(
+    private_repo, pulpcore_bindings, gen_object_with_cleanup, rust_distro_api_client, monitor_task
+):
+    """The private repository, its crate files guarded by a content redirect guard."""
+    guard = gen_object_with_cleanup(
+        pulpcore_bindings.ContentguardsContentRedirectApi, {"name": str(uuid.uuid4())}
+    )
+    # The bindings send the default of every field left out, so cargo_auth_required would
+    # fall back to False if it were not repeated here.
+    monitor_task(
+        rust_distro_api_client.partial_update(
+            private_repo["distribution"].pulp_href,
+            {"content_guard": guard.pulp_href, "cargo_auth_required": True},
+        ).task
+    )
+    return private_repo
+
+
+def test_download_redirect_is_preauthenticated(
+    redirect_guarded_repo, gen_user, rust_token_factory, rust_distro_api_client
+):
+    """The content app does not know Cargo tokens: the redirect carries the authorization."""
+    user = gen_user()
+    rust_distro_api_client.add_role(
+        redirect_guarded_repo["distribution"].pulp_href,
+        {"role": "rust.rustdistribution_viewer", "users": [user.username]},
+    )
+    download_url = urljoin(redirect_guarded_repo["base_url"], "api/v1/crates/itoa/1.0.0/download")
+
+    response = cargo_api_request(
+        "GET",
+        download_url,
+        headers={"Authorization": rust_token_factory(user).token},
+        allow_redirects=False,
+    )
+    assert response.status_code == 302
+    signed_url = response.headers["Location"]
+    assert "validate_token=" in signed_url
+
+    # Fetched without any credential, as the signature is the authorization.
+    crate = cargo_api_request("GET", signed_url)
+    assert crate.status_code == 200
+    assert crate.content
+
+    unsigned_url = signed_url.split("?", 1)[0]
+    assert cargo_api_request("GET", unsigned_url).status_code == 403
+
+
+def test_download_redirect_still_checks_the_token(redirect_guarded_repo, gen_user):
+    """Signing happens after the access check: a user without a role gets no signed URL."""
+    user = gen_user()
+    creds = base64.b64encode(f"{user.username}:{user.password}".encode()).decode()
+
+    response = cargo_api_request(
+        "GET",
+        urljoin(redirect_guarded_repo["base_url"], "api/v1/crates/itoa/1.0.0/download"),
+        headers={"Authorization": f"Basic {creds}"},
+        allow_redirects=False,
+    )
+    assert response.status_code == 403
+
+
+def test_download_redirect_is_not_signed_without_auth_required(
+    redirect_guarded_repo, rust_distro_api_client, monitor_task
+):
+    """Without cargo_auth_required nothing is checked, so the guard still applies."""
+    href = redirect_guarded_repo["distribution"].pulp_href
+    guard = rust_distro_api_client.read(href).content_guard
+    assert guard
+    monitor_task(
+        rust_distro_api_client.partial_update(
+            href, {"cargo_auth_required": False, "content_guard": guard}
+        ).task
+    )
+
+    response = cargo_api_request(
+        "GET",
+        urljoin(redirect_guarded_repo["base_url"], "api/v1/crates/itoa/1.0.0/download"),
+        allow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "validate_token=" not in response.headers["Location"]
+    assert cargo_api_request("GET", response.headers["Location"]).status_code == 403

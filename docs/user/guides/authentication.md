@@ -54,8 +54,24 @@ credential on index and download requests, and rejects these requests unless the
 `WWW-Authenticate: Cargo` challenge, which tells Cargo to retry with its credential.
 
 The download endpoint redirects to the content app, which this setting does not cover. To
-protect the crate files there as well, also attach a content guard that accepts the credential
-Cargo sends.
+protect the crate files there as well, attach a content redirect guard to the distribution:
+
+```bash
+http POST http://<pulp-host>/pulp/api/v3/contentguards/core/content_redirect/ \
+    -a admin:password \
+    name=private-crates
+http PATCH http://<pulp-host>/pulp/api/v3/distributions/rust/rust/<uuid>/ \
+    -a admin:password \
+    content_guard=<content-guard-href>
+```
+
+The download endpoint then checks the credential, including the distributions and actions a
+Cargo token is scoped to, and redirects to a signed URL of the crate file that expires after an
+hour. The content app only accepts the crate file with that signature. A signed URL stays valid
+until it expires, even if the user loses access in the meantime. The download endpoint only
+signs URLs while `cargo_auth_required` is set, as it checks nothing otherwise. A content guard that
+checks the user instead, such as an RBAC content guard, does not work with Cargo tokens: the
+content app does not know them.
 
 ### Scoping a Token
 

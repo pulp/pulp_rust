@@ -497,7 +497,15 @@ class CargoDownloadApiView(CargoAuthMixin, APIView):
     def redirect_to_content_app(self, distribution, relative_path, request):
         full_path = self.get_full_path(distribution.base_path)
         content_path = f"{settings.CONTENT_PATH_PREFIX}{full_path}/{relative_path}"
-        return redirect(request.build_absolute_uri(content_path))
+        url = request.build_absolute_uri(content_path)
+        # The content app does not know Cargo tokens. A guard that can preauthenticate a
+        # URL (the content redirect guard) lets it trust this view's access check instead.
+        # Only when that check ran: without cargo_auth_required, anyone would get a signature.
+        if distribution.cargo_auth_required and distribution.content_guard:
+            guard = distribution.content_guard.cast()
+            if hasattr(guard, "preauthenticate_url"):
+                url = guard.preauthenticate_url(url)
+        return redirect(url)
 
     def get_distribution(self):
         return get_object_or_404(
